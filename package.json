@@ -87,7 +87,8 @@
       "<rootDir>/libs/"
     ],
     "moduleNameMapper": {
-      "^@oms/contracts(|/.*)$": "<rootDir>/libs/contracts/src$1"
+      "^@oms/contracts(|/.*)$": "<rootDir>/libs/contracts/src$1",
+      "^@oms/plugin-sdk(|/.*)$": "<rootDir>/libs/plugin-sdk/src$1"
     }
   }
 }

@@ -22,7 +22,12 @@
     "strictBindCallApply": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@oms/contracts": ["libs/contracts/src"]
+      "@oms/contracts": [
+        "libs/contracts/src"
+      ],
+      "@oms/plugin-sdk": [
+        "libs/plugin-sdk/src"
+      ]
     }
   }
 }

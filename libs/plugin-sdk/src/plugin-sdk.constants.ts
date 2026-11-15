@@ -1,0 +1,1 @@
+export const PLUGIN_MANIFEST = 'PLUGIN_MANIFEST';
