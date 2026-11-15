@@ -38,6 +38,6 @@ CREATE TABLE IF NOT EXISTS order_command (
   processed_at TIMESTAMPTZ,
   PRIMARY KEY (command_id),
   FOREIGN KEY (order_id) REFERENCES "order" (id),
-  CHECK (type IN ('INVOICE_ORDER', 'CANCEL_ORDER', 'SHIP_ORDER')),
+  CHECK (type IN ('INVOICE_ORDER', 'CANCEL_ORDER', 'SHIP_ORDER', 'RETURN_ORDER')),
   CHECK (status IN ('PENDING', 'SUCCEEDED', 'FAILED'))
 );

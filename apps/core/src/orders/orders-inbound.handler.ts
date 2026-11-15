@@ -10,6 +10,10 @@ export class OrdersInboundHandler {
 
   // Para o Sr. Gustavo Trizotti: quando o módulo de mensageria existir, conecte ele aqui para chegar as mensagens na fila INBOUND_QUEUE
   // Ahh mas como fazer? Não sei. Descobre ai e depois me mostra, que eu quero aprender também.
+
+  // aqui é a entrada, ou seja, consumer da fila chama esse handle.
+  // O envio de comandos (modulo de despacho de comandos do C4 nivel 3) pro plugin fica no fim do changeStatus, no orders.service.
+  // e mt provavelmente vai estar no modulo de estoque do Sr Raul também.
   async handle(message: InboundMessage) {
     switch (message.type) {
       case InboundMessageType.ORDER_RECEIVED:

@@ -6,10 +6,13 @@ import {
   IsNotEmpty,
   IsString,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
 import { OrderItem } from '@oms/contracts';
+
+import { NewOrder } from './orders.service';
 
 export class CreateOrderItemDto implements OrderItem {
   @IsString()
@@ -25,7 +28,17 @@ export class CreateOrderItemDto implements OrderItem {
   unitPriceCents: number;
 }
 
-export class CreateOrderDto {
+export class CreateOrderDto implements NewOrder {
+  @ValidateIf((dto: CreateOrderDto) => dto.externalOrderId !== undefined)
+  @IsString()
+  @IsNotEmpty()
+  pluginId?: string;
+
+  @ValidateIf((dto: CreateOrderDto) => dto.pluginId !== undefined)
+  @IsString()
+  @IsNotEmpty()
+  externalOrderId?: string;
+
   @IsArray()
   @ArrayNotEmpty()
   @ValidateNested({ each: true })

@@ -2,6 +2,7 @@ export enum CommandType {
   INVOICE_ORDER = 'INVOICE_ORDER',
   CANCEL_ORDER = 'CANCEL_ORDER',
   SHIP_ORDER = 'SHIP_ORDER',
+  RETURN_ORDER = 'RETURN_ORDER',
   UPDATE_STOCK = 'UPDATE_STOCK',
 }
 
@@ -37,6 +38,14 @@ export interface ShipOrderCommand extends BaseCommand {
   };
 }
 
+export interface ReturnOrderCommand extends BaseCommand {
+  type: CommandType.RETURN_ORDER;
+  data: {
+    orderId: string;
+    externalOrderId: string;
+  };
+}
+
 export interface UpdateStockCommand extends BaseCommand {
   type: CommandType.UPDATE_STOCK;
   data: {
@@ -49,4 +58,5 @@ export type Command =
   | InvoiceOrderCommand
   | CancelOrderCommand
   | ShipOrderCommand
+  | ReturnOrderCommand
   | UpdateStockCommand;

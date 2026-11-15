@@ -92,6 +92,10 @@ export class OrdersService {
       // seria algo como: ve se tem estoque, tem, reserva e muda status do pedido. Não tem, cancela e preenche razão.
       // o método de reservar estoque pode receber um orderId, pegar os items daquela order, fazer o inventário de estoque somente dos itens dessa order, e se não conseguir de algum, ele te retorna um erro, sla.
 
+      // correção: aqui a order não foi inserida ainda, ela está dentro de uma transaction.
+      // Tem que fazer a reserva de estoque dentro da mesma transaction, e se não houver estoque suficiente, vc deve lançar uma exceção,
+      // que vai fazer o rollback da transaction e a order não vai ser inserida. (ou, tratar para nesse caso não dar rollback mas inserir a order como cancelada)
+
       await this.changeStatus(client, orderId, OrderStatus.RESERVED);
 
       this.logger.log(`Order ${orderId} created`);
@@ -126,7 +130,7 @@ export class OrdersService {
     // exemplo de calculo dos valores:
     // reservados = tudo reservado - (tudo que foi vendido + tudo que foi cancelado)
     // vendidos = tudo que foi vendido - tudo que foi devolvido
-    // disponível = (tudo que entrou + tudo que foi devolvido) - (reservados + vendidos)
+    // disponível = (tudo que entrou) - (reservados + vendidos)
     // fez sentido? tem certos status que são a contra parte de outros, ou seja, agem como agente positivo e negativo. Da uma refletida sobre isso e dps me chama pra trocar uma ideia se tiver duvidas.
     // isso é bem cara de sistema de WMS.
     // se precisarmos mudar isso vc me avisa, é bem chato isso mesmo.
@@ -134,7 +138,12 @@ export class OrdersService {
 
   async return(orderId: string) {
     await this.transaction((client) =>
-      this.changeStatus(client, orderId, OrderStatus.RETURNED),
+      this.changeStatus(
+        client,
+        orderId,
+        OrderStatus.RETURNED,
+        CommandType.RETURN_ORDER,
+      ),
     );
     // bom, aqui vc chama o estoque támbem.
     // return serve como negativa de venda e como entrada de estoque, ou seja, vc vai aumentar o disponível e diminuir o vendido.
@@ -152,7 +161,7 @@ export class OrdersService {
     );
 
     // aqui vc também chama o modulo de estoque pra recalcular.
-    // o cancelado ele serve como negativa de reserva e positiva de estoque físico, ou seja, vc vai aumentar o disponível e diminuir o reservado.
+    // o cancelado só desfaz a reserva, ou seja, ele diminui o reservado e aumenta o disponível. O físico não muda, pois o produto nunca chegou a sair de fato
   }
 
   async cancelByChannel(
@@ -274,6 +283,8 @@ export class OrdersService {
     // Quando o módulo de mensageria existir, tem que mandar a mensagem de comando para o plugin, com o orderId e o commandId,
     // que é gerado automaticamente pelo banco de dados.
     // no fim, é só pra atualizar o status do pedido caso o plugin tenha a capacidade de processar o comando, e caso não tenha, o status do pedido não muda (ihul).
+
+    // Pra pegar o commandId, coloca RETURNING command_id no INSERT acima e já vai estar pronto pra vc.
   }
 
   private async transaction<T>(

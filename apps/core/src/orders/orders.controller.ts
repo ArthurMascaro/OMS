@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   HttpCode,
@@ -17,8 +18,12 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
-  async create(@Body() body: CreateOrderDto): Promise<{ id: string | null }> {
-    const id = await this.ordersService.create({ items: body.items });
+  async create(@Body() body: CreateOrderDto): Promise<{ id: string }> {
+    const id = await this.ordersService.create(body);
+
+    if (!id) {
+      throw new BadRequestException('Could not create order');
+    }
 
     return { id };
   }
