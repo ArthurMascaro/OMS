@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health.controller';
+import { OrdersModule } from './orders/orders.module';
 import { PluginRegistryModule } from './plugin-registry/plugin-registry.module';
 
 @Module({
@@ -10,6 +11,7 @@ import { PluginRegistryModule } from './plugin-registry/plugin-registry.module';
     ConfigModule.forRoot({ isGlobal: true }),
     DatabaseModule,
     PluginRegistryModule,
+    OrdersModule,
   ],
   controllers: [HealthController],
 })
