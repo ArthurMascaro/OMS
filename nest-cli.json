@@ -10,6 +10,15 @@
   "monorepo": true,
   "root": "apps/core",
   "projects": {
+    "contracts": {
+      "type": "library",
+      "root": "libs/contracts",
+      "entryFile": "index",
+      "sourceRoot": "libs/contracts/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/contracts/tsconfig.lib.json"
+      }
+    },
     "core": {
       "type": "application",
       "root": "apps/core",
