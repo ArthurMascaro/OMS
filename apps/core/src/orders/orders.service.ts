@@ -47,6 +47,7 @@ export class OrdersService {
   constructor(
     private readonly pool: Pool,
     private readonly stockService: StockService,
+    private readonly database: DatabaseService,
   ) {}
 
   async findAll(): Promise<Order[]> {
@@ -377,91 +378,10 @@ export class OrdersService {
         unit_price_cents AS "unitPriceCents"
        FROM order_item
        WHERE order_id = $1
-       ORDER BY sku`,
+       ORDER BY id`,
       [orderId],
     );
 
     return response.rows;
-  }
-
-  private async transaction<T>(
-    work: (client: PoolClient) => Promise<T>,
-  ): Promise<T> {
-    const maxAttempts = 3;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const client = await this.pool.connect();
-
-      try {
-        await client.query('BEGIN');
-
-        const result = await work(client);
-
-        await client.query('COMMIT');
-
-        return result;
-      } catch (error) {
-        await client.query('ROLLBACK');
-
-        if (this.isStockVersionConflict(error) && attempt < maxAttempts) {
-          continue;
-        }
-
-        throw error;
-      } finally {
-        client.release();
-      }
-    }
-
-    throw new Error('Transaction retry limit reached');
-  }
-
-  private isStockVersionConflict(error: unknown): boolean {
-    if (typeof error !== 'object' || error === null) {
-      return false;
-    }
-
-    const databaseError = error as { code?: string; constraint?: string };
-    return (
-      databaseError.code === '23505' &&
-      databaseError.constraint === 'stock_event_sku_version_key'
-    );
-  }
-
-  private mapOrderRows(rows: OrderRow[]): Order[] {
-    const orders = new Map<string, Order>();
-
-    for (const row of rows) {
-      let order = orders.get(row.id);
-
-      if (!order) {
-        order = {
-          id: row.id,
-          pluginId: row.pluginId ?? undefined,
-          externalOrderId: row.externalOrderId ?? undefined,
-          status: row.status,
-          items: [],
-          totalCents: row.totalCents,
-          cancelReason: row.cancelReason ?? undefined,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-        };
-        orders.set(row.id, order);
-      }
-
-      if (
-        row.itemSku !== null &&
-        row.itemQuantity !== null &&
-        row.itemUnitPriceCents !== null
-      ) {
-        order.items.push({
-          sku: row.itemSku,
-          quantity: row.itemQuantity,
-          unitPriceCents: row.itemUnitPriceCents,
-        });
-      }
-    }
-
-    return [...orders.values()];
   }
 }

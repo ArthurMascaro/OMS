@@ -1,10 +1,10 @@
-import depthLimit from 'graphql-depth-limit'
+import depthLimit from 'graphql-depth-limit';
 
 export const graphqlConfig = {
-    path: '/graphql',
-    autoSchemaFile: true,
-    sortSchema: true,
-    introspection: true,
-    playground: true,
-    validationRules: [depthLimit(8)]
-}
+  path: '/graphql',
+  autoSchemaFile: true,
+  sortSchema: true,
+  introspection: true,
+  playground: true,
+  validationRules: [depthLimit(8)],
+};
