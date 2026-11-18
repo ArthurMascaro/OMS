@@ -8,6 +8,7 @@ import { Pool, PoolClient } from 'pg';
 
 import { CommandType, OrderItem, OrderStatus } from '@oms/contracts';
 
+import { StockService } from '../stock/stock.service';
 import { ORDER_TRANSITIONS, OrderCommandStatus } from './orders.constants';
 
 export interface NewOrder {
@@ -33,7 +34,10 @@ interface LockedOrder {
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
 
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly stockService: StockService,
+  ) {}
 
   async create(order: NewOrder): Promise<string | null> {
     const totalCents = order.items.reduce(
@@ -96,7 +100,23 @@ export class OrdersService {
       // Tem que fazer a reserva de estoque dentro da mesma transaction, e se não houver estoque suficiente, vc deve lançar uma exceção,
       // que vai fazer o rollback da transaction e a order não vai ser inserida. (ou, tratar para nesse caso não dar rollback mas inserir a order como cancelada)
 
-      await this.changeStatus(client, orderId, OrderStatus.RESERVED);
+      const reserved = await this.stockService.reserve(
+        client,
+        orderId,
+        order.items,
+      );
+
+      if (reserved) {
+        await this.changeStatus(client, orderId, OrderStatus.RESERVED);
+      } else {
+        await this.changeStatus(
+          client,
+          orderId,
+          OrderStatus.CANCELED,
+          undefined,
+          'OUT_OF_STOCK',
+        );
+      }
 
       this.logger.log(`Order ${orderId} created`);
 
