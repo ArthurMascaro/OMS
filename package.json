@@ -16,6 +16,7 @@
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
+    "dependency-cruiser": "dependency-cruiser --validate .dependency-cruiser.cjs apps/core/src",
     "start:core": "nest start core --watch",
     "start:plugin-mercado-livre": "nest start plugin-mercado-livre --watch",
     "start:plugin-marketplace-b": "nest start plugin-marketplace-b --watch"
