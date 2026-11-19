@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { PoolClient } from 'pg';
+import { Pool, PoolClient } from 'pg';
 
-import { OrderItem, StockEventType } from '@oms/contracts';
+import { OrderItem, StockBalance, StockEventType } from '@oms/contracts';
 
 import { DatabaseService } from '../database/database.service';
 
@@ -22,7 +22,39 @@ interface StockVersionRow {
 
 @Injectable()
 export class StockService {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly database: DatabaseService,
+  ) {}
+
+  async getBalance(sku: string): Promise<StockBalance> {
+    const response = await this.pool.query<StockBalanceRow>(
+      `SELECT
+        COALESCE(SUM(CASE
+          WHEN type IN ('STOCK_RECEIVED', 'STOCK_RETURNED') THEN quantity
+          WHEN type = 'STOCK_SHIPPED' THEN -quantity
+          ELSE 0
+        END), 0)::TEXT AS physical,
+        COALESCE(SUM(CASE
+          WHEN type = 'RESERVATION_CREATED' THEN quantity
+          WHEN type IN ('RESERVATION_RELEASED', 'STOCK_SHIPPED') THEN -quantity
+          ELSE 0
+        END), 0)::TEXT AS reserved
+       FROM stock_event
+       WHERE sku = $1`,
+      [sku],
+    );
+
+    const physical = Number(response.rows[0].physical);
+    const reserved = Number(response.rows[0].reserved);
+
+    return {
+      sku,
+      physical,
+      reserved,
+      available: physical - reserved,
+    };
+  }
 
   async receive(sku: string, quantity: number): Promise<void> {
     await this.database.transaction((client) =>
