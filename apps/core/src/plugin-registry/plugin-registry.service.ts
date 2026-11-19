@@ -84,10 +84,11 @@ export class PluginRegistryService {
 
   async findActiveByCapability(
     capability: Capability,
+    client: Pool | PoolClient = this.pool,
   ): Promise<PluginManifest[]> {
     const interval = HEARTBEAT_TIMEOUT_MS / 1000;
 
-    const response = await this.pool.query<PluginManifest>(
+    const response = await client.query<PluginManifest>(
       `SELECT 
         id, 
         marketplace, 

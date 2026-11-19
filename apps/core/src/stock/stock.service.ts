@@ -1,11 +1,10 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 
 import {
   OrderItem,
   StockBalance,
   StockEventType,
-  UpdateStockCommand,
 } from '@oms/contracts';
 
 import { DatabaseService } from '../database/database.service';
@@ -36,9 +35,8 @@ export class StockService {
   constructor(
     private readonly pool: Pool,
     private readonly database: DatabaseService,
-    @Optional()
     @Inject(STOCK_AVAILABILITY_PORT)
-    private readonly availabilityPort?: StockAvailabilityPort,
+    private readonly availabilityPort: StockAvailabilityPort,
   ) {}
 
   async getBalance(sku: string): Promise<StockBalance> {
@@ -71,7 +69,7 @@ export class StockService {
   }
 
   async receive(sku: string, quantity: number): Promise<void> {
-    const updates = await this.database.transaction((client) =>
+    await this.database.transaction((client) =>
       this.appendEvents(
         client,
         null,
@@ -79,21 +77,13 @@ export class StockService {
         StockEventType.STOCK_RECEIVED,
       ),
     );
-    await this.notifyAvailabilityChanges(updates);
-  }
-
-  async notifyAvailabilityChanges(updates: UpdateStockCommand['data'][]) {
-    if (!this.availabilityPort) return;
-    for (const update of updates) {
-      await this.availabilityPort.notifyAvailabilityChanged(update);
-    }
   }
 
   async reserve(
     client: PoolClient,
     orderId: string,
     items: OrderItem[],
-  ): Promise<{ reserved: boolean; updates: UpdateStockCommand['data'][] }> {
+  ): Promise<{ reserved: boolean }> {
     const quantitiesBySku = new Map<string, number>();
     for (const item of items) {
       quantitiesBySku.set(
@@ -129,18 +119,18 @@ export class StockService {
       const available = physical - reserved;
 
       if (available < (quantitiesBySku.get(sku) ?? 0)) {
-        return { reserved: false, updates: [] };
+        return { reserved: false };
       }
     }
 
-    const updates = await this.appendEvents(
+    await this.appendEvents(
       client,
       orderId,
       items,
       StockEventType.RESERVATION_CREATED,
     );
 
-    return { reserved: true, updates };
+    return { reserved: true };
   }
 
   async ship(client: PoolClient, orderId: string, items: OrderItem[]) {
@@ -179,7 +169,7 @@ export class StockService {
     orderId: string | null,
     items: StockQuantity[],
     type: StockEventType,
-  ): Promise<UpdateStockCommand['data'][]> {
+  ): Promise<void> {
     const quantitiesBySku = new Map<string, number>();
     for (const item of items) {
       quantitiesBySku.set(
@@ -189,7 +179,7 @@ export class StockService {
     }
 
     const skus = [...quantitiesBySku.keys()].sort();
-    if (skus.length === 0) return [];
+    if (skus.length === 0) return;
 
     const versionResponse = await client.query<StockVersionRow>(
       `SELECT
@@ -225,11 +215,14 @@ export class StockService {
       values,
     );
 
-    if (type === StockEventType.STOCK_SHIPPED) return [];
-    return (await this.readBalances(client, skus)).map(({ sku, available }) => ({
-      sku,
-      available,
-    }));
+    if (type === StockEventType.STOCK_SHIPPED) return;
+
+    for (const { sku, available } of await this.readBalances(client, skus)) {
+      await this.availabilityPort.notifyAvailabilityChanged(client, {
+        sku,
+        available,
+      });
+    }
   }
 
   private async readBalances(
