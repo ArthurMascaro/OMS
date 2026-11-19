@@ -10,6 +10,7 @@ import { CommandType, OrderItem, OrderStatus } from '@oms/contracts';
 
 import { DatabaseService } from '../database/database.service';
 import { StockService } from '../stock/stock.service';
+import { OrderCommandDispatcher } from './order-command.dispatcher';
 import { ORDER_TRANSITIONS, OrderCommandStatus } from './orders.constants';
 
 export interface NewOrder {
@@ -21,6 +22,7 @@ export interface NewOrder {
 interface LockedOrder {
   status: OrderStatus;
   pluginId: string | null;
+  externalOrderId: string | null;
 }
 
 // Para o Sr Trizzoti e Raul Souza. Se acharem o método transaction interessante, dá pra criar algo na pasta /libs pra fazer esse compartilhado entre os services,
@@ -34,6 +36,7 @@ export class OrdersService {
     private readonly pool: Pool,
     private readonly stockService: StockService,
     private readonly database: DatabaseService,
+    private readonly dispatcher: OrderCommandDispatcher,
   ) {}
 
   async create(order: NewOrder): Promise<string | null> {
@@ -247,7 +250,8 @@ export class OrdersService {
     const response = await client.query<LockedOrder>(
       `SELECT
         status,
-        plugin_id AS "pluginId"
+        plugin_id AS "pluginId",
+        external_order_id AS "externalOrderId"
        FROM "order"
        WHERE
         id = $1
@@ -282,7 +286,7 @@ export class OrdersService {
       return order.status;
     }
 
-    await client.query(
+    const command = await client.query<{ command_id: string }>(
       `INSERT INTO order_command (
         order_id,
         plugin_id,
@@ -291,16 +295,19 @@ export class OrdersService {
         $1,
         $2,
         $3
-       )`,
+       )
+       RETURNING command_id`,
       [orderId, order.pluginId, commandType],
     );
 
-    // Aqui é para o Sr. Trizotti.
-    // Quando o módulo de mensageria existir, tem que mandar a mensagem de comando para o plugin, com o orderId e o commandId,
-    // que é gerado automaticamente pelo banco de dados.
-    // no fim, é só pra atualizar o status do pedido caso o plugin tenha a capacidade de processar o comando, e caso não tenha, o status do pedido não muda (ihul).
-
-    // Pra pegar o commandId, coloca RETURNING command_id no INSERT acima e já vai estar pronto pra vc.
+    await this.dispatcher.dispatch(client, {
+      commandId: command.rows[0].command_id,
+      type: commandType,
+      pluginId: order.pluginId,
+      orderId,
+      externalOrderId: order.externalOrderId,
+      reason: cancelReason,
+    });
 
     return order.status;
   }

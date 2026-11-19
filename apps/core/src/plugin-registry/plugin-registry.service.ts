@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 
 import {
   Capability,
@@ -43,6 +43,23 @@ export class PluginRegistryService {
         last_heartbeat_at = NOW()
        WHERE id = $1`,
       [pluginId],
+    );
+
+    return response.rowCount === 1;
+  }
+
+  async supports(
+    client: PoolClient,
+    pluginId: string,
+    capability: Capability,
+  ): Promise<boolean> {
+    const response = await client.query(
+      `SELECT 1
+       FROM plugin
+       WHERE
+        id = $1
+        AND $2 = ANY (capabilities)`,
+      [pluginId, capability],
     );
 
     return response.rowCount === 1;
