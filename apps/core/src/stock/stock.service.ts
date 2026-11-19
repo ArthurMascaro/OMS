@@ -3,6 +3,13 @@ import { PoolClient } from 'pg';
 
 import { OrderItem, StockEventType } from '@oms/contracts';
 
+import { DatabaseService } from '../database/database.service';
+
+interface StockQuantity {
+  sku: string;
+  quantity: number;
+}
+
 interface StockBalanceRow {
   physical: string;
   reserved: string;
@@ -15,6 +22,19 @@ interface StockVersionRow {
 
 @Injectable()
 export class StockService {
+  constructor(private readonly database: DatabaseService) {}
+
+  async receive(sku: string, quantity: number): Promise<void> {
+    await this.database.transaction((client) =>
+      this.appendEvents(
+        client,
+        null,
+        [{ sku, quantity }],
+        StockEventType.STOCK_RECEIVED,
+      ),
+    );
+  }
+
   async reserve(
     client: PoolClient,
     orderId: string,
@@ -100,8 +120,8 @@ export class StockService {
 
   private async appendEvents(
     client: PoolClient,
-    orderId: string,
-    items: OrderItem[],
+    orderId: string | null,
+    items: StockQuantity[],
     type: StockEventType,
   ) {
     const quantitiesBySku = new Map<string, number>();
@@ -130,7 +150,7 @@ export class StockService {
     const versionsBySku = new Map(
       versionResponse.rows.map((row) => [row.sku, Number(row.version)]),
     );
-    const values: (string | number)[] = [];
+    const values: (string | number | null)[] = [];
     const tuples = skus.map((sku, index) => {
       const offset = index * 5;
       const version = (versionsBySku.get(sku) ?? 0) + 1;

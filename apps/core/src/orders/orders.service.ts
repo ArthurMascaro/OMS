@@ -8,6 +8,7 @@ import { Pool, PoolClient } from 'pg';
 
 import { CommandType, OrderItem, OrderStatus } from '@oms/contracts';
 
+import { DatabaseService } from '../database/database.service';
 import { StockService } from '../stock/stock.service';
 import { ORDER_TRANSITIONS, OrderCommandStatus } from './orders.constants';
 
@@ -32,6 +33,7 @@ export class OrdersService {
   constructor(
     private readonly pool: Pool,
     private readonly stockService: StockService,
+    private readonly database: DatabaseService,
   ) {}
 
   async create(order: NewOrder): Promise<string | null> {
@@ -43,7 +45,7 @@ export class OrdersService {
     const quantities = order.items.map((item) => item.quantity);
     const unitPrices = order.items.map((item) => item.unitPriceCents);
 
-    return this.transaction(async (client) => {
+    return this.database.transaction(async (client) => {
       const response = await client.query<{ id: string }>(
         `INSERT INTO "order" (
           plugin_id,
@@ -110,7 +112,7 @@ export class OrdersService {
   }
 
   async invoice(orderId: string) {
-    await this.transaction((client) =>
+    await this.database.transaction((client) =>
       this.changeStatus(
         client,
         orderId,
@@ -121,7 +123,7 @@ export class OrdersService {
   }
 
   async ship(orderId: string) {
-    await this.transaction(async (client) => {
+    await this.database.transaction(async (client) => {
       const items = await this.loadOrderItems(client, orderId);
       await this.changeStatus(
         client,
@@ -134,7 +136,7 @@ export class OrdersService {
   }
 
   async return(orderId: string) {
-    await this.transaction(async (client) => {
+    await this.database.transaction(async (client) => {
       const items = await this.loadOrderItems(client, orderId);
       await this.changeStatus(
         client,
@@ -147,7 +149,7 @@ export class OrdersService {
   }
 
   async cancel(orderId: string, reason: string) {
-    await this.transaction(async (client) => {
+    await this.database.transaction(async (client) => {
       const previousStatus = await this.changeStatus(
         client,
         orderId,
@@ -185,7 +187,7 @@ export class OrdersService {
 
     const orderId = response.rows[0].id;
 
-    await this.transaction(async (client) => {
+    await this.database.transaction(async (client) => {
       const previousStatus = await this.changeStatus(
         client,
         orderId,
@@ -309,47 +311,4 @@ export class OrdersService {
     return response.rows;
   }
 
-  private async transaction<T>(
-    work: (client: PoolClient) => Promise<T>,
-  ): Promise<T> {
-    const maxAttempts = 3;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const client = await this.pool.connect();
-
-      try {
-        await client.query('BEGIN');
-
-        const result = await work(client);
-
-        await client.query('COMMIT');
-
-        return result;
-      } catch (error) {
-        await client.query('ROLLBACK');
-
-        if (this.isStockVersionConflict(error) && attempt < maxAttempts) {
-          continue;
-        }
-
-        throw error;
-      } finally {
-        client.release();
-      }
-    }
-
-    throw new Error('Transaction retry limit reached');
-  }
-
-  private isStockVersionConflict(error: unknown): boolean {
-    if (typeof error !== 'object' || error === null) {
-      return false;
-    }
-
-    const databaseError = error as { code?: string; constraint?: string };
-    return (
-      databaseError.code === '23505' &&
-      databaseError.constraint === 'stock_event_sku_version_key'
-    );
-  }
 }
