@@ -10,3 +10,6 @@ export const HEARTBEAT_INTERVAL_MS = 10000;
 export const HEARTBEAT_TIMEOUT_MS = 30000;
 
 export const PLUGIN_QUEUE_PREFIX = 'plugin.';
+
+export const OUTBOX_BATCH_SIZE = 50;
+export const MAX_INBOUND_RETRIES = 3;
