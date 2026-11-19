@@ -8,13 +8,10 @@ import { OrdersService } from './orders.service';
 export class OrdersInboundHandler {
   constructor(private readonly ordersService: OrdersService) {}
 
-  // Para o Sr. Gustavo Trizotti: quando o módulo de mensageria existir, conecte ele aqui para chegar as mensagens na fila INBOUND_QUEUE
-  // Ahh mas como fazer? Não sei. Descobre ai e depois me mostra, que eu quero aprender também.
-
-  // aqui é a entrada, ou seja, consumer da fila chama esse handle.
-  // O envio de comandos (modulo de despacho de comandos do C4 nivel 3) pro plugin fica no fim do changeStatus, no orders.service.
-  // e mt provavelmente vai estar no modulo de estoque do Sr Raul também.
-  async handle(message: InboundMessage) {
+  // Chamado pelo InboundConsumer (messaging/inbound.consumer.ts) para cada
+  // mensagem da core.inbound. Lançar aqui faz a mensagem ser retentada e, ao
+  // esgotar MAX_INBOUND_RETRIES, ir para a core.inbound.dlq.
+  async handle(message: InboundMessage): Promise<void> {
     switch (message.type) {
       case InboundMessageType.ORDER_RECEIVED:
         await this.ordersService.create({
@@ -39,6 +36,11 @@ export class OrdersInboundHandler {
           message.data.error,
         );
         return;
+
+      default:
+        throw new Error(
+          `Tipo de mensagem desconhecido: ${String((message as { type?: unknown }).type)}`,
+        );
     }
   }
 }
