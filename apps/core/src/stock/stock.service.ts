@@ -9,6 +9,7 @@ interface StockBalanceRow {
 }
 
 interface StockVersionRow {
+  sku: string;
   version: string;
 }
 
@@ -28,13 +29,6 @@ export class StockService {
     }
 
     const skus = [...quantitiesBySku.keys()].sort();
-
-    for (const sku of skus) {
-      await client.query(
-        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-        [sku],
-      );
-    }
 
     for (const sku of skus) {
       const response = await client.query<StockBalanceRow>(
@@ -63,33 +57,98 @@ export class StockService {
       }
     }
 
-    for (const sku of skus) {
-      const versionResponse = await client.query<StockVersionRow>(
-        `SELECT (COALESCE(MAX(version), 0) + 1)::TEXT AS version
-         FROM stock_event
-         WHERE sku = $1`,
-        [sku],
-      );
-      const version = Number(versionResponse.rows[0].version);
+    await this.appendEvents(
+      client,
+      orderId,
+      items,
+      StockEventType.RESERVATION_CREATED,
+    );
 
-      await client.query(
-        `INSERT INTO stock_event (
-          sku,
-          version,
-          type,
-          quantity,
-          order_id
-         ) VALUES ($1, $2, $3, $4, $5)`,
-        [
-          sku,
-          version,
-          StockEventType.RESERVATION_CREATED,
-          quantitiesBySku.get(sku),
-          orderId,
-        ],
+    return true;
+  }
+
+  async ship(client: PoolClient, orderId: string, items: OrderItem[]) {
+    await this.appendEvents(
+      client,
+      orderId,
+      items,
+      StockEventType.STOCK_SHIPPED,
+    );
+  }
+
+  async return(client: PoolClient, orderId: string, items: OrderItem[]) {
+    await this.appendEvents(
+      client,
+      orderId,
+      items,
+      StockEventType.STOCK_RETURNED,
+    );
+  }
+
+  async releaseReservation(
+    client: PoolClient,
+    orderId: string,
+    items: OrderItem[],
+  ) {
+    await this.appendEvents(
+      client,
+      orderId,
+      items,
+      StockEventType.RESERVATION_RELEASED,
+    );
+  }
+
+  private async appendEvents(
+    client: PoolClient,
+    orderId: string,
+    items: OrderItem[],
+    type: StockEventType,
+  ) {
+    const quantitiesBySku = new Map<string, number>();
+    for (const item of items) {
+      quantitiesBySku.set(
+        item.sku,
+        (quantitiesBySku.get(item.sku) ?? 0) + item.quantity,
       );
     }
 
-    return true;
+    const skus = [...quantitiesBySku.keys()].sort();
+    if (skus.length === 0) {
+      return;
+    }
+
+    const versionResponse = await client.query<StockVersionRow>(
+      `SELECT
+        sku,
+        MAX(version)::TEXT AS version
+         FROM stock_event
+         WHERE sku = ANY($1::TEXT[])
+         GROUP BY sku`,
+      [skus],
+    );
+
+    const versionsBySku = new Map(
+      versionResponse.rows.map((row) => [row.sku, Number(row.version)]),
+    );
+    const values: (string | number)[] = [];
+    const tuples = skus.map((sku, index) => {
+      const offset = index * 5;
+      const version = (versionsBySku.get(sku) ?? 0) + 1;
+
+      values.push(sku, version, type, quantitiesBySku.get(sku)!, orderId);
+
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`;
+    });
+
+    await client.query(
+      `INSERT INTO stock_event (
+        sku,
+        version,
+        type,
+        quantity,
+        order_id
+       ) VALUES ${tuples.join(', ')}`,
+      values,
+    );
   }
 }
