@@ -384,4 +384,41 @@ export class OrdersService {
 
     return response.rows;
   }
+
+  private mapOrderRows(rows: OrderRow[]): Order[] {
+    const orders = new Map<string, Order>();
+
+    for (const row of rows) {
+      let order = orders.get(row.id);
+
+      if (!order) {
+        order = {
+          id: row.id,
+          pluginId: row.pluginId ?? undefined,
+          externalOrderId: row.externalOrderId ?? undefined,
+          status: row.status,
+          items: [],
+          totalCents: row.totalCents,
+          cancelReason: row.cancelReason ?? undefined,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        };
+        orders.set(row.id, order);
+      }
+
+      if (
+        row.itemSku !== null &&
+        row.itemQuantity !== null &&
+        row.itemUnitPriceCents !== null
+      ) {
+        order.items.push({
+          sku: row.itemSku,
+          quantity: row.itemQuantity,
+          unitPriceCents: row.itemUnitPriceCents,
+        });
+      }
+    }
+
+    return [...orders.values()];
+  }
 }
