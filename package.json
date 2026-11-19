@@ -19,7 +19,8 @@
     "test:int": "jest --testRegex \".*\\\\.int-spec\\\\.ts$\" --runInBand",
     "start:core": "nest start core --watch",
     "start:plugin-mercado-livre": "nest start plugin-mercado-livre --watch",
-    "start:plugin-marketplace-b": "nest start plugin-marketplace-b --watch"
+    "start:plugin-marketplace-b": "nest start plugin-marketplace-b --watch",
+    "lint:arch": "depcruise apps/core/src --config .dependency-cruiser.cjs"
   },
   "dependencies": {
     "@apollo/server": "^5.5.2",
