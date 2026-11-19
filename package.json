@@ -16,12 +16,14 @@
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
+    "dependency-cruiser": "dependency-cruiser --validate .dependency-cruiser.cjs apps/core/src",
     "start:core": "nest start core --watch",
     "start:plugin-mercado-livre": "nest start plugin-mercado-livre --watch",
     "start:plugin-marketplace-b": "nest start plugin-marketplace-b --watch"
   },
   "dependencies": {
     "@apollo/server": "^5.5.2",
+    "@as-integrations/express5": "^1.1.2",
     "@golevelup/nestjs-rabbitmq": "^9.1.2",
     "@nestjs/apollo": "^13.4.5",
     "@nestjs/common": "^11.0.1",
@@ -46,6 +48,7 @@
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
     "@types/express": "^5.0.0",
+    "@types/graphql-depth-limit": "^1.1.6",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.7",
     "@types/pg": "^8.23.1",
