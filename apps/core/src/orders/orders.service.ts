@@ -45,7 +45,7 @@ export class OrdersService {
     const quantities = order.items.map((item) => item.quantity);
     const unitPrices = order.items.map((item) => item.unitPriceCents);
 
-    return this.database.transaction(async (client) => {
+    const creation = await this.database.transaction(async (client) => {
       const response = await client.query<{ id: string }>(
         `INSERT INTO "order" (
           plugin_id,
@@ -93,7 +93,7 @@ export class OrdersService {
         order.items,
       );
 
-      if (reserved) {
+      if (reserved.reserved) {
         await this.changeStatus(client, orderId, OrderStatus.RESERVED);
       } else {
         await this.changeStatus(
@@ -107,8 +107,14 @@ export class OrdersService {
 
       this.logger.log(`Order ${orderId} created`);
 
-      return orderId;
+      return { orderId, availabilityUpdates: reserved.updates };
     });
+
+    if (!creation) return null;
+    await this.stockService.notifyAvailabilityChanges(
+      creation.availabilityUpdates,
+    );
+    return creation.orderId;
   }
 
   async invoice(orderId: string) {
@@ -123,7 +129,7 @@ export class OrdersService {
   }
 
   async ship(orderId: string) {
-    await this.database.transaction(async (client) => {
+    const updates = await this.database.transaction(async (client) => {
       const items = await this.loadOrderItems(client, orderId);
       await this.changeStatus(
         client,
@@ -131,12 +137,13 @@ export class OrdersService {
         OrderStatus.SHIPPED,
         CommandType.SHIP_ORDER,
       );
-      await this.stockService.ship(client, orderId, items);
+      return this.stockService.ship(client, orderId, items);
     });
+    await this.stockService.notifyAvailabilityChanges(updates);
   }
 
   async return(orderId: string) {
-    await this.database.transaction(async (client) => {
+    const updates = await this.database.transaction(async (client) => {
       const items = await this.loadOrderItems(client, orderId);
       await this.changeStatus(
         client,
@@ -144,12 +151,13 @@ export class OrdersService {
         OrderStatus.RETURNED,
         CommandType.RETURN_ORDER,
       );
-      await this.stockService.return(client, orderId, items);
+      return this.stockService.return(client, orderId, items);
     });
+    await this.stockService.notifyAvailabilityChanges(updates);
   }
 
   async cancel(orderId: string, reason: string) {
-    await this.database.transaction(async (client) => {
+    const updates = await this.database.transaction(async (client) => {
       const previousStatus = await this.changeStatus(
         client,
         orderId,
@@ -160,9 +168,11 @@ export class OrdersService {
 
       if (previousStatus === OrderStatus.RESERVED) {
         const items = await this.loadOrderItems(client, orderId);
-        await this.stockService.releaseReservation(client, orderId, items);
+        return this.stockService.releaseReservation(client, orderId, items);
       }
+      return [];
     });
+    await this.stockService.notifyAvailabilityChanges(updates);
   }
 
   async cancelByChannel(
@@ -187,7 +197,7 @@ export class OrdersService {
 
     const orderId = response.rows[0].id;
 
-    await this.database.transaction(async (client) => {
+    const updates = await this.database.transaction(async (client) => {
       const previousStatus = await this.changeStatus(
         client,
         orderId,
@@ -198,9 +208,11 @@ export class OrdersService {
 
       if (previousStatus === OrderStatus.RESERVED) {
         const items = await this.loadOrderItems(client, orderId);
-        await this.stockService.releaseReservation(client, orderId, items);
+        return this.stockService.releaseReservation(client, orderId, items);
       }
+      return [];
     });
+    await this.stockService.notifyAvailabilityChanges(updates);
   }
 
   async completeCommand(commandId: string, success: boolean, error?: string) {
