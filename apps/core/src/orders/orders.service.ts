@@ -10,6 +10,8 @@ import { CommandType, Order, OrderItem, OrderStatus } from '@oms/contracts';
 
 import { DatabaseService } from '../database/database.service';
 import { StockService } from '../stock/stock.service';
+import { DatabaseService } from '../database/database.service';
+import { StockService } from '../stock/stock.service';
 import { ORDER_TRANSITIONS, OrderCommandStatus } from './orders.constants';
 
 export interface NewOrder {
@@ -363,6 +365,8 @@ export class OrdersService {
     // no fim, é só pra atualizar o status do pedido caso o plugin tenha a capacidade de processar o comando, e caso não tenha, o status do pedido não muda (ihul).
 
     // Pra pegar o commandId, coloca RETURNING command_id no INSERT acima e já vai estar pronto pra vc.
+
+    return order.status;
 
     return order.status;
   }
