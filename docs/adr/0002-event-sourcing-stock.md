@@ -8,7 +8,7 @@ O ciclo de vida dos pedidos, advindos de diversos canais, influencia diretamente
 
 Como o OMS centraliza pedidos de múltiplos marketplaces, é necessário manter um histórico confiável das movimentações de estoque, garantindo rastreabilidade e consistência mesmo diante de operações simultâneas.
 
-Além disso, diferentes consumidores do sistema precisam consultar o saldo de estoque sem interferir nas operações de movimentação. Para isso, é necessário separar a responsabilidade de registrar eventos da responsabilidade de disponibilizar os saldos para consulta.
+Além disso, diferentes consumidores do sistema precisam consultar o saldo de estoque sem interferir nas operações de movimentação. O saldo deve ser obtido a partir dos eventos registrados.
 
 Alternativas consideradas:
 
@@ -22,9 +22,9 @@ Utilizaremos uma arquitetura de Event Sourcing para gerenciar as movimentações
 
 O saldo físico, o reservado e o disponível serão calculados a partir dos eventos da referência. O saldo físico representa a quantidade de unidades existentes no estoque. O reservado representa a quantidade de unidades comprometidas com pedidos ainda não despachados. O disponível representa a quantidade que pode ser comercializada, calculada como físico menos reservado.
 
-Será utilizada uma coluna de versão, com a restrição `UNIQUE (referencia, versao)`, garantindo uma sequência independente de eventos para cada referência. Cada evento também possuirá um identificador único e a identificação da operação de origem, permitindo reconhecer tentativas repetidas de processamento e impedir movimentações duplicadas.
+Cada evento possuirá um identificador único. Uma coluna de versão, com a restrição `UNIQUE (sku, version)`, garantirá uma sequência independente de eventos para cada referência. A concorrência será controlada de forma otimista: se duas transações tentarem gravar a mesma versão, a restrição única rejeitará uma delas, e a aplicação reverterá e repetirá a transação, recalculando o saldo.
 
-O Event Store será gerenciado pelo módulo de estoque, responsável por registrar as movimentações como eventos imutáveis e garantir a integridade das operações. Um módulo independente de projeção processará assincronamente os eventos persistidos no PostgreSQL e manterá uma representação atualizada do estoque, contendo as quantidades física, reservada e disponível. A projeção poderá ficar temporariamente desatualizada em relação aos eventos registrados.
+O Event Store será gerenciado pelo módulo de estoque, responsável por registrar as movimentações como eventos imutáveis e garantir a integridade das operações. O módulo de estoque calculará o saldo diretamente a partir dos eventos. Se o volume de eventos tornar essas consultas custosas, snapshots poderão ser adicionados futuramente.
 
 Quando uma movimentação alterar o saldo disponível, o módulo de estoque solicitará ao módulo de despacho de comandos a atualização dos marketplaces por meio dos plugins compatíveis.
 
@@ -35,20 +35,17 @@ Positivas:
 - Toda alteração de saldo tem origem rastreável até o pedido.
 - O saldo de qualquer data pode ser reconstruído.
 - Erros são corrigidos com um evento de compensação, sem editar o passado.
-- A projeção pode ser apagada e recriada a partir dos eventos.
-- A identificação das operações permitirá garantir idempotência no processamento de mensagens repetidas.
-- A separação entre escrita e leitura permite consultas independentes das operações de movimentação.
+- O saldo pode ser calculado sob demanda sem manter uma tabela de saldo separada.
+- A restrição de versão única por SKU e a repetição da transação protegem as reservas concorrentes.
 
 Negativas:
 
-- A projeção pode apresentar consistência eventual, exibindo temporariamente um saldo desatualizado em relação aos eventos registrados.
-- Escrita e leitura passam a ter modelos separados, aumentando a quantidade de componentes do core.
+- O cálculo do saldo pode ficar mais custoso à medida que o histórico de eventos cresce.
 - O formato de um evento vira contrato permanente. Mudanças exigem versionamento.
-- Referências com muitos eventos poderão precisar de snapshots no futuro.
+- SKUs com muitos eventos poderão precisar de snapshots no futuro.
 
 ## Conformidade
 
 - O usuário de banco da aplicação não tem permissão de `UPDATE` nem de `DELETE` na tabela de eventos, já que é uma tabela imutável.
-- Teste em Jest que reconstrói o saldo a partir dos eventos e compara com a projeção.
+- Testes em Jest verificam o cálculo do saldo a partir dos eventos.
 - Testes verificam a concorrência de duas reservas simultâneas da última unidade, em que só uma é aceita.
-- Uma regra impede a escrita na projeção fora do módulo de projeção.
