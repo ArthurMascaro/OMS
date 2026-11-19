@@ -6,12 +6,7 @@ import {
 } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 
-import {
-  CommandType,
-  Order,
-  OrderItem,
-  OrderStatus,
-} from '@oms/contracts';
+import { CommandType, Order, OrderItem, OrderStatus } from '@oms/contracts';
 
 import { StockService } from '../stock/stock.service';
 import { ORDER_TRANSITIONS, OrderCommandStatus } from './orders.constants';
@@ -40,11 +35,6 @@ interface OrderRow {
   itemQuantity: number | null;
   itemUnitPriceCents: number | null;
 }
-
-// Para o Sr. Raul Souza, estou deixando alguns comentários nos métodos onde vc vai ter que inserir as chamadas para o módulo de estoque, que ainda não existe.
-// Algumas considerações minhas: vc pode criar o módulo e injetar o service de estoque dentro desse service de orders, conforme eu fiz no nivel 3 do C4 pra usarmos como base.
-// Ah, e depois me faz o favor de remover esses comentários aqui, por gentileza
-// no caso do Sr. Lucas estar vendo isso, um grande abraço ao senhor também! Aqui nosso dialogo é assim.
 
 // Para o Sr Trizzoti e Raul Souza. Se acharem o método transaction interessante, dá pra criar algo na pasta /libs pra fazer esse compartilhado entre os services,
 //  e aí o service de orders e o service de plugin-registry podem usar. Mas não é obrigatório, só uma sugestão.
@@ -157,16 +147,6 @@ export class OrdersService {
         [orderId, skus, quantities, unitPrices],
       );
 
-      // Aqui a order já foi inserida, então vc vai ter que chamar o modulo de estoque para reservar o estoque dos itens da order.
-      // Se não houver estoque suficiente, vc deve mudar o status da order para CANCELED e preencher o campo cancel_reason com OUT_OF_STOCK.
-      // Se houver estoque suficiente, vc deve mudar o status da order para RESERVED.
-      // seria algo como: ve se tem estoque, tem, reserva e muda status do pedido. Não tem, cancela e preenche razão.
-      // o método de reservar estoque pode receber um orderId, pegar os items daquela order, fazer o inventário de estoque somente dos itens dessa order, e se não conseguir de algum, ele te retorna um erro, sla.
-
-      // correção: aqui a order não foi inserida ainda, ela está dentro de uma transaction.
-      // Tem que fazer a reserva de estoque dentro da mesma transaction, e se não houver estoque suficiente, vc deve lançar uma exceção,
-      // que vai fazer o rollback da transaction e a order não vai ser inserida. (ou, tratar para nesse caso não dar rollback mas inserir a order como cancelada)
-
       const reserved = await this.stockService.reserve(
         client,
         orderId,
@@ -203,52 +183,46 @@ export class OrdersService {
   }
 
   async ship(orderId: string) {
-    await this.transaction((client) =>
-      this.changeStatus(
+    await this.transaction(async (client) => {
+      const items = await this.loadOrderItems(client, orderId);
+      await this.changeStatus(
         client,
         orderId,
         OrderStatus.SHIPPED,
         CommandType.SHIP_ORDER,
-      ),
-    );
-
-    // aqui, vc chama o modulo de estoque pra recalcular novamente, entretanto, como o estoque já foi reservado, o ship funciona como uma negativa de reserva e uma positiva de venda
-    // no fim não vai mudar nada no disponível, mas vai mudar o reservado e o vendido.
-    // exemplo de calculo dos valores:
-    // reservados = tudo reservado - (tudo que foi vendido + tudo que foi cancelado)
-    // vendidos = tudo que foi vendido - tudo que foi devolvido
-    // disponível = (tudo que entrou) - (reservados + vendidos)
-    // fez sentido? tem certos status que são a contra parte de outros, ou seja, agem como agente positivo e negativo. Da uma refletida sobre isso e dps me chama pra trocar uma ideia se tiver duvidas.
-    // isso é bem cara de sistema de WMS.
-    // se precisarmos mudar isso vc me avisa, é bem chato isso mesmo.
+      );
+      await this.stockService.ship(client, orderId, items);
+    });
   }
 
   async return(orderId: string) {
-    await this.transaction((client) =>
-      this.changeStatus(
+    await this.transaction(async (client) => {
+      const items = await this.loadOrderItems(client, orderId);
+      await this.changeStatus(
         client,
         orderId,
         OrderStatus.RETURNED,
         CommandType.RETURN_ORDER,
-      ),
-    );
-    // bom, aqui vc chama o estoque támbem.
-    // return serve como negativa de venda e como entrada de estoque, ou seja, vc vai aumentar o disponível e diminuir o vendido.
+      );
+      await this.stockService.return(client, orderId, items);
+    });
   }
 
   async cancel(orderId: string, reason: string) {
-    await this.transaction((client) =>
-      this.changeStatus(
+    await this.transaction(async (client) => {
+      const previousStatus = await this.changeStatus(
         client,
         orderId,
         OrderStatus.CANCELED,
         CommandType.CANCEL_ORDER,
         reason,
-      ),
-    );
+      );
 
-    // aqui vc também chama o modulo de estoque pra recalcular.
-    // o cancelado só desfaz a reserva, ou seja, ele diminui o reservado e aumenta o disponível. O físico não muda, pois o produto nunca chegou a sair de fato
+      if (previousStatus === OrderStatus.RESERVED) {
+        const items = await this.loadOrderItems(client, orderId);
+        await this.stockService.releaseReservation(client, orderId, items);
+      }
+    });
   }
 
   async cancelByChannel(
@@ -273,17 +247,20 @@ export class OrdersService {
 
     const orderId = response.rows[0].id;
 
-    await this.transaction((client) =>
-      this.changeStatus(
+    await this.transaction(async (client) => {
+      const previousStatus = await this.changeStatus(
         client,
         orderId,
         OrderStatus.CANCELED,
         undefined,
         reason,
-      ),
-    );
+      );
 
-    // aqui mesma coisa do cancel, vc chama o modulo de estoque pra recalcular.
+      if (previousStatus === OrderStatus.RESERVED) {
+        const items = await this.loadOrderItems(client, orderId);
+        await this.stockService.releaseReservation(client, orderId, items);
+      }
+    });
   }
 
   async completeCommand(commandId: string, success: boolean, error?: string) {
@@ -314,7 +291,7 @@ export class OrdersService {
     status: OrderStatus,
     commandType?: CommandType,
     cancelReason?: string,
-  ) {
+  ): Promise<OrderStatus> {
     const response = await client.query<LockedOrder>(
       `SELECT
         status,
@@ -350,7 +327,7 @@ export class OrdersService {
     );
 
     if (!order.pluginId || !commandType) {
-      return;
+      return order.status;
     }
 
     await client.query(
@@ -372,27 +349,70 @@ export class OrdersService {
     // no fim, é só pra atualizar o status do pedido caso o plugin tenha a capacidade de processar o comando, e caso não tenha, o status do pedido não muda (ihul).
 
     // Pra pegar o commandId, coloca RETURNING command_id no INSERT acima e já vai estar pronto pra vc.
+
+    return order.status;
+  }
+
+  private async loadOrderItems(
+    client: PoolClient,
+    orderId: string,
+  ): Promise<OrderItem[]> {
+    const response = await client.query<OrderItem>(
+      `SELECT
+        sku,
+        quantity,
+        unit_price_cents AS "unitPriceCents"
+       FROM order_item
+       WHERE order_id = $1
+       ORDER BY sku`,
+      [orderId],
+    );
+
+    return response.rows;
   }
 
   private async transaction<T>(
     work: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
-    const client = await this.pool.connect();
+    const maxAttempts = 3;
 
-    try {
-      await client.query('BEGIN');
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const client = await this.pool.connect();
 
-      const result = await work(client);
+      try {
+        await client.query('BEGIN');
 
-      await client.query('COMMIT');
+        const result = await work(client);
 
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+        await client.query('COMMIT');
+
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK');
+
+        if (this.isStockVersionConflict(error) && attempt < maxAttempts) {
+          continue;
+        }
+
+        throw error;
+      } finally {
+        client.release();
+      }
     }
+
+    throw new Error('Transaction retry limit reached');
+  }
+
+  private isStockVersionConflict(error: unknown): boolean {
+    if (typeof error !== 'object' || error === null) {
+      return false;
+    }
+
+    const databaseError = error as { code?: string; constraint?: string };
+    return (
+      databaseError.code === '23505' &&
+      databaseError.constraint === 'stock_event_sku_version_key'
+    );
   }
 
   private mapOrderRows(rows: OrderRow[]): Order[] {
