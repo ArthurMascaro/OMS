@@ -8,6 +8,7 @@ import { Pool, PoolClient } from 'pg';
 
 import { CommandType, Order, OrderItem, OrderStatus } from '@oms/contracts';
 
+import { DatabaseService } from '../database/database.service';
 import { StockService } from '../stock/stock.service';
 import { ORDER_TRANSITIONS, OrderCommandStatus } from './orders.constants';
 
@@ -105,7 +106,7 @@ export class OrdersService {
     const quantities = order.items.map((item) => item.quantity);
     const unitPrices = order.items.map((item) => item.unitPriceCents);
 
-    return this.transaction(async (client) => {
+    return this.database.transaction(async (client) => {
       const response = await client.query<{ id: string }>(
         `INSERT INTO "order" (
           plugin_id,
@@ -172,7 +173,7 @@ export class OrdersService {
   }
 
   async invoice(orderId: string) {
-    await this.transaction((client) =>
+    await this.database.transaction((client) =>
       this.changeStatus(
         client,
         orderId,
@@ -183,7 +184,7 @@ export class OrdersService {
   }
 
   async ship(orderId: string) {
-    await this.transaction(async (client) => {
+    await this.database.transaction(async (client) => {
       const items = await this.loadOrderItems(client, orderId);
       await this.changeStatus(
         client,
@@ -196,7 +197,7 @@ export class OrdersService {
   }
 
   async return(orderId: string) {
-    await this.transaction(async (client) => {
+    await this.database.transaction(async (client) => {
       const items = await this.loadOrderItems(client, orderId);
       await this.changeStatus(
         client,
@@ -209,7 +210,7 @@ export class OrdersService {
   }
 
   async cancel(orderId: string, reason: string) {
-    await this.transaction(async (client) => {
+    await this.database.transaction(async (client) => {
       const previousStatus = await this.changeStatus(
         client,
         orderId,
@@ -247,7 +248,7 @@ export class OrdersService {
 
     const orderId = response.rows[0].id;
 
-    await this.transaction(async (client) => {
+    await this.database.transaction(async (client) => {
       const previousStatus = await this.changeStatus(
         client,
         orderId,
