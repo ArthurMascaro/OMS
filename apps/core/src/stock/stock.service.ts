@@ -1,9 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 
-import { OrderItem, StockBalance, StockEventType } from '@oms/contracts';
+import {
+  OrderItem,
+  StockBalance,
+  StockEventType,
+  UpdateStockCommand,
+} from '@oms/contracts';
 
 import { DatabaseService } from '../database/database.service';
+import { STOCK_AVAILABILITY_PORT } from './stock-availability.port';
+import type { StockAvailabilityPort } from './stock-availability.port';
 
 interface StockQuantity {
   sku: string;
@@ -13,6 +20,10 @@ interface StockQuantity {
 interface StockBalanceRow {
   physical: string;
   reserved: string;
+}
+
+interface StockBalanceBySkuRow extends StockBalanceRow {
+  sku: string;
 }
 
 interface StockVersionRow {
@@ -25,6 +36,9 @@ export class StockService {
   constructor(
     private readonly pool: Pool,
     private readonly database: DatabaseService,
+    @Optional()
+    @Inject(STOCK_AVAILABILITY_PORT)
+    private readonly availabilityPort?: StockAvailabilityPort,
   ) {}
 
   async getBalance(sku: string): Promise<StockBalance> {
@@ -57,7 +71,7 @@ export class StockService {
   }
 
   async receive(sku: string, quantity: number): Promise<void> {
-    await this.database.transaction((client) =>
+    const updates = await this.database.transaction((client) =>
       this.appendEvents(
         client,
         null,
@@ -65,13 +79,21 @@ export class StockService {
         StockEventType.STOCK_RECEIVED,
       ),
     );
+    await this.notifyAvailabilityChanges(updates);
+  }
+
+  async notifyAvailabilityChanges(updates: UpdateStockCommand['data'][]) {
+    if (!this.availabilityPort) return;
+    for (const update of updates) {
+      await this.availabilityPort.notifyAvailabilityChanged(update);
+    }
   }
 
   async reserve(
     client: PoolClient,
     orderId: string,
     items: OrderItem[],
-  ): Promise<boolean> {
+  ): Promise<{ reserved: boolean; updates: UpdateStockCommand['data'][] }> {
     const quantitiesBySku = new Map<string, number>();
     for (const item of items) {
       quantitiesBySku.set(
@@ -83,8 +105,9 @@ export class StockService {
     const skus = [...quantitiesBySku.keys()].sort();
 
     for (const sku of skus) {
-      const response = await client.query<StockBalanceRow>(
+      const response = await client.query<StockBalanceBySkuRow>(
         `SELECT
+          sku,
           COALESCE(SUM(CASE
             WHEN type IN ('STOCK_RECEIVED', 'STOCK_RETURNED') THEN quantity
             WHEN type = 'STOCK_SHIPPED' THEN -quantity
@@ -96,7 +119,8 @@ export class StockService {
             ELSE 0
           END), 0)::TEXT AS reserved
          FROM stock_event
-         WHERE sku = $1`,
+         WHERE sku = $1
+         GROUP BY sku`,
         [sku],
       );
 
@@ -105,22 +129,22 @@ export class StockService {
       const available = physical - reserved;
 
       if (available < (quantitiesBySku.get(sku) ?? 0)) {
-        return false;
+        return { reserved: false, updates: [] };
       }
     }
 
-    await this.appendEvents(
+    const updates = await this.appendEvents(
       client,
       orderId,
       items,
       StockEventType.RESERVATION_CREATED,
     );
 
-    return true;
+    return { reserved: true, updates };
   }
 
   async ship(client: PoolClient, orderId: string, items: OrderItem[]) {
-    await this.appendEvents(
+    return this.appendEvents(
       client,
       orderId,
       items,
@@ -129,7 +153,7 @@ export class StockService {
   }
 
   async return(client: PoolClient, orderId: string, items: OrderItem[]) {
-    await this.appendEvents(
+    return this.appendEvents(
       client,
       orderId,
       items,
@@ -142,7 +166,7 @@ export class StockService {
     orderId: string,
     items: OrderItem[],
   ) {
-    await this.appendEvents(
+    return this.appendEvents(
       client,
       orderId,
       items,
@@ -155,7 +179,7 @@ export class StockService {
     orderId: string | null,
     items: StockQuantity[],
     type: StockEventType,
-  ) {
+  ): Promise<UpdateStockCommand['data'][]> {
     const quantitiesBySku = new Map<string, number>();
     for (const item of items) {
       quantitiesBySku.set(
@@ -165,9 +189,7 @@ export class StockService {
     }
 
     const skus = [...quantitiesBySku.keys()].sort();
-    if (skus.length === 0) {
-      return;
-    }
+    if (skus.length === 0) return [];
 
     const versionResponse = await client.query<StockVersionRow>(
       `SELECT
@@ -202,5 +224,41 @@ export class StockService {
        ) VALUES ${tuples.join(', ')}`,
       values,
     );
+
+    if (type === StockEventType.STOCK_SHIPPED) return [];
+    return (await this.readBalances(client, skus)).map(({ sku, available }) => ({
+      sku,
+      available,
+    }));
+  }
+
+  private async readBalances(
+    client: PoolClient,
+    skus: string[],
+  ): Promise<StockBalance[]> {
+    const response = await client.query<StockBalanceBySkuRow>(
+      `SELECT
+        sku,
+        COALESCE(SUM(CASE
+          WHEN type IN ('STOCK_RECEIVED', 'STOCK_RETURNED') THEN quantity
+          WHEN type = 'STOCK_SHIPPED' THEN -quantity
+          ELSE 0
+        END), 0)::TEXT AS physical,
+        COALESCE(SUM(CASE
+          WHEN type = 'RESERVATION_CREATED' THEN quantity
+          WHEN type IN ('RESERVATION_RELEASED', 'STOCK_SHIPPED') THEN -quantity
+          ELSE 0
+        END), 0)::TEXT AS reserved
+       FROM stock_event
+       WHERE sku = ANY($1::TEXT[])
+       GROUP BY sku`,
+      [skus],
+    );
+
+    return response.rows.map((row) => {
+      const physical = Number(row.physical);
+      const reserved = Number(row.reserved);
+      return { sku: row.sku, physical, reserved, available: physical - reserved };
+    });
   }
 }
