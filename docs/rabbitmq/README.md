@@ -41,7 +41,7 @@ Detalhes da lib que o relay usa:
 
 **Monitoramento:** o `GET /health` do core continua com `status: "ok"` e ganhou o campo `outbox`, com `pending` (linhas não publicadas) e `oldestPendingAgeSeconds` (idade da mais antiga, `null` se não há pendente). Os dois vêm de `OutboxRelayService.stats()`. Idade crescendo indica plugin sem fila ou broker fora.
 
-**Desligamento:** o `main.ts` chama `enableShutdownHooks()`. No SIGTERM o relay para de agendar novos lotes e espera o lote em andamento terminar antes de o Nest fechar a conexão AMQP e o pool do banco.
+**Desligamento:** o `main.ts` chama `enableShutdownHooks()`. No SIGTERM o relay para de agendar novos lotes e espera o lote em andamento terminar antes de o Nest fechar a conexão AMQP.
 
 A entrega é at-least-once: se o relay cair entre o ack e o commit, a mesma mensagem sai de novo. O plugin descarta duplicata pelo commandId.
 
