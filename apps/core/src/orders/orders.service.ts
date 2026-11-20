@@ -191,6 +191,13 @@ export class OrdersService {
     const orderId = response.rows[0].id;
 
     await this.database.transaction(async (client) => {
+      if (await this.isAlreadyCanceled(client, orderId)) {
+        this.logger.log(
+          `Order ${externalOrderId} from ${pluginId} already canceled`,
+        );
+        return;
+      }
+
       const previousStatus = await this.changeStatus(
         client,
         orderId,
@@ -300,6 +307,23 @@ export class OrdersService {
     return order.status;
   }
 
+  private async isAlreadyCanceled(
+    client: PoolClient,
+    orderId: string,
+  ): Promise<boolean> {
+    const response = await client.query<{ status: OrderStatus }>(
+      `SELECT
+        status
+       FROM "order"
+       WHERE
+        id = $1
+       FOR UPDATE`,
+      [orderId],
+    );
+
+    return response.rows[0]?.status === OrderStatus.CANCELED;
+  }
+
   private async loadOrderItems(
     client: PoolClient,
     orderId: string,
@@ -317,5 +341,4 @@ export class OrdersService {
 
     return response.rows;
   }
-
 }

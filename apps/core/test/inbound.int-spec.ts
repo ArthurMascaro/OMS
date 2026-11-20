@@ -18,8 +18,9 @@ import { InboundModule } from '../src/messaging/inbound.module';
 import { MessagingModule } from '../src/messaging/messaging.module';
 import { OrdersInboundHandler } from '../src/orders/orders-inbound.handler';
 
-// Recorte do Channel do amqplib usado pelo teste (sem @types/amqplib).
-interface TestChannel {
+type HandlerOutcome = 'ok' | 'erro';
+
+interface AmqplibTestChannel {
   purgeQueue(queue: string): Promise<unknown>;
   checkQueue(queue: string): Promise<{ messageCount: number }>;
   get(
@@ -35,9 +36,9 @@ interface TestChannel {
 }
 
 const WAIT_TIMEOUT_MS = 10000;
+const WAIT_STEP_MS = 50;
 
 jest.setTimeout(WAIT_TIMEOUT_MS * 2);
-const WAIT_STEP_MS = 50;
 
 const waitFor = async <T>(
   probe: () => Promise<T | undefined>,
@@ -55,7 +56,7 @@ const waitFor = async <T>(
 describe('Consumer da core.inbound (integração)', () => {
   let moduleRef: Awaited<ReturnType<typeof buildModule>>;
   let amqp: AmqpConnection;
-  let channel: TestChannel;
+  let channel: AmqplibTestChannel;
   let pool: Pool;
   let handler: OrdersInboundHandler;
   const pluginId = `plugin-inbound-${randomUUID()}`;
@@ -79,8 +80,7 @@ describe('Consumer da core.inbound (integração)', () => {
       contentType: 'application/json',
     });
 
-  // Lê a DLQ até achar a mensagem esperada (descarta resíduos de outras execuções).
-  const takeFromDlq = (matches: (content: string) => boolean) =>
+  const takeFromDlqDiscardingOthers = (matches: (content: string) => boolean) =>
     waitFor(async () => {
       const message = await channel.get(INBOUND_DLQ, { noAck: true });
       if (message === false) return undefined;
@@ -89,6 +89,31 @@ describe('Consumer da core.inbound (integração)', () => {
 
   const inboundIsEmpty = async () =>
     (await channel.checkQueue(INBOUND_QUEUE)).messageCount === 0;
+
+  const dlqMessageCount = async () =>
+    (await channel.checkQueue(INBOUND_DLQ)).messageCount;
+
+  const recordHandlerOutcomesOf = (messageId: string) => {
+    const outcomes: HandlerOutcome[] = [];
+    const original = handler.handle.bind(handler);
+    jest.spyOn(handler, 'handle').mockImplementation(async (message) => {
+      if (message.messageId !== messageId) return original(message);
+      try {
+        await original(message);
+        outcomes.push('ok');
+      } catch (error) {
+        outcomes.push('erro');
+        throw error;
+      }
+    });
+    return outcomes;
+  };
+
+  const waitForOutcomes = (outcomes: HandlerOutcome[], count: number) =>
+    waitFor(
+      () => Promise.resolve(outcomes.length >= count ? true : undefined),
+      `${count} execuções do handler`,
+    );
 
   const orderOf = async (externalOrderId: string) => {
     const { rows } = await pool.query<{ id: string; status: OrderStatus }>(
@@ -102,11 +127,10 @@ describe('Consumer da core.inbound (integração)', () => {
   beforeAll(async () => {
     moduleRef = await buildModule();
     amqp = moduleRef.get(AmqpConnection);
-    channel = amqp.channel as TestChannel;
+    channel = amqp.channel as AmqplibTestChannel;
     pool = moduleRef.get(Pool);
     handler = moduleRef.get(OrdersInboundHandler);
 
-    // Purga antes de init(): o consumer só assina no onApplicationBootstrap.
     await channel.purgeQueue(INBOUND_QUEUE);
     await channel.purgeQueue(INBOUND_DLQ);
     await moduleRef.init();
@@ -137,14 +161,14 @@ describe('Consumer da core.inbound (integração)', () => {
   });
 
   it('ORDER_RECEIVED cria o pedido uma única vez, mesmo entregue duas vezes', async () => {
-    // Estoque de 1 unidade e pedido de 2: o pedido é cancelado por OUT_OF_STOCK
-    // sem gerar stock_event ligado a ele, então pode ser removido no afterAll.
     const sku = `SKU-${randomUUID()}`;
     skus.push(sku);
+    const insufficientStock = 1;
+    const quantityAboveStockSoOrderHasNoStockEvents = 2;
     await pool.query(
       `INSERT INTO stock_event (sku, version, type, quantity)
-       VALUES ($1, 1, 'STOCK_RECEIVED', 1)`,
-      [sku],
+       VALUES ($1, 1, 'STOCK_RECEIVED', $2)`,
+      [sku, insufficientStock],
     );
     const externalOrderId = `ext-${randomUUID()}`;
     const message: InboundMessage = {
@@ -154,9 +178,16 @@ describe('Consumer da core.inbound (integração)', () => {
       issuedAt: new Date().toISOString(),
       data: {
         externalOrderId,
-        items: [{ sku, quantity: 2, unitPriceCents: 1000 }],
+        items: [
+          {
+            sku,
+            quantity: quantityAboveStockSoOrderHasNoStockEvents,
+            unitPriceCents: 1000,
+          },
+        ],
       },
     };
+    const outcomes = recordHandlerOutcomesOf(message.messageId);
 
     await publish(message, message.messageId);
     await publish(message, message.messageId);
@@ -169,11 +200,41 @@ describe('Consumer da core.inbound (integração)', () => {
     }, 'pedido criado');
     orderIds.push(order.id);
 
+    await waitForOutcomes(outcomes, 2);
+    expect(outcomes).toEqual(['ok', 'ok']);
+    expect(await orderOf(externalOrderId)).toHaveLength(1);
+    expect(await dlqMessageCount()).toBe(0);
+  });
+
+  it('ORDER_CANCELED_BY_CHANNEL repetido é ignorado sem ir para a DLQ', async () => {
+    const externalOrderId = `ext-${randomUUID()}`;
+    const { rows } = await pool.query<{ id: string }>(
+      `INSERT INTO "order" (plugin_id, external_order_id, status, total_cents)
+       VALUES ($1, $2, 'CREATED', 100) RETURNING id`,
+      [pluginId, externalOrderId],
+    );
+    orderIds.push(rows[0].id);
+    const message: InboundMessage = {
+      messageId: randomUUID(),
+      type: InboundMessageType.ORDER_CANCELED_BY_CHANNEL,
+      pluginId,
+      issuedAt: new Date().toISOString(),
+      data: { externalOrderId, reason: 'cancelado no marketplace' },
+    };
+    const outcomes = recordHandlerOutcomesOf(message.messageId);
+
+    await publish(message, message.messageId);
+    await publish(message, message.messageId);
+
+    await waitForOutcomes(outcomes, 2);
+    expect(outcomes).toEqual(['ok', 'ok']);
     await waitFor(
       async () => ((await inboundIsEmpty()) ? true : undefined),
       'core.inbound vazia',
     );
-    expect(await orderOf(externalOrderId)).toHaveLength(1);
+    expect(await dlqMessageCount()).toBe(0);
+    const [order] = await orderOf(externalOrderId);
+    expect(order.status).toBe(OrderStatus.CANCELED);
   });
 
   it('COMMAND_PROCESSED marca o order_command como SUCCEEDED', async () => {
@@ -222,7 +283,9 @@ describe('Consumer da core.inbound (integração)', () => {
       messageId,
     );
 
-    const dead = await takeFromDlq((content) => content.includes(messageId));
+    const dead = await takeFromDlqDiscardingOthers((content) =>
+      content.includes(messageId),
+    );
     expect(dead.properties.headers?.['x-retry-count']).toBe(
       MAX_INBOUND_RETRIES,
     );
@@ -233,7 +296,9 @@ describe('Consumer da core.inbound (integração)', () => {
     const marker = `nao-e-json-${randomUUID()}`;
     await publish(Buffer.from(marker));
 
-    const dead = await takeFromDlq((content) => content === marker);
+    const dead = await takeFromDlqDiscardingOthers(
+      (content) => content === marker,
+    );
     expect(dead.content.toString()).toBe(marker);
     expect(await inboundIsEmpty()).toBe(true);
   });
