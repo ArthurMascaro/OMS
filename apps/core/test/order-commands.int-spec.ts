@@ -4,12 +4,29 @@ import { Test } from '@nestjs/testing';
 import { randomUUID } from 'crypto';
 import { Pool } from 'pg';
 
-import { Capability, CommandType, OrderStatus } from '@oms/contracts';
+import { Capability, Command, CommandType, OrderStatus } from '@oms/contracts';
 
 import { DatabaseModule } from '../src/database/database.module';
 import { OrderCommandDispatcher } from '../src/orders/order-command.dispatcher';
 import { OrdersModule } from '../src/orders/orders.module';
 import { OrdersService } from '../src/orders/orders.service';
+
+interface OrderCommandRow {
+  command_id: string;
+  status: string;
+}
+
+interface OutboxRow {
+  id: string;
+  routing_key: string;
+  correlation_id: string | null;
+  payload: Command;
+}
+
+interface OrderRow {
+  status: OrderStatus;
+  cancel_reason: string | null;
+}
 
 describe('Comandos de pedido no outbox (integração)', () => {
   let moduleRef: Awaited<ReturnType<typeof buildModule>>;
@@ -42,12 +59,18 @@ describe('Comandos de pedido no outbox (integração)', () => {
     return { id: rows[0].id, externalOrderId };
   };
 
-  const statusOf = async (id: string) =>
-    (await pool.query('SELECT status FROM "order" WHERE id = $1', [id]))
-      .rows[0].status;
+  const orderOf = async (id: string) =>
+    (
+      await pool.query<OrderRow>(
+        'SELECT status, cancel_reason FROM "order" WHERE id = $1',
+        [id],
+      )
+    ).rows[0];
+
+  const statusOf = async (id: string) => (await orderOf(id)).status;
 
   const outboxFor = (id: string) =>
-    pool.query(
+    pool.query<OutboxRow>(
       `SELECT * FROM outbox_message WHERE payload->'data'->>'orderId' = $1`,
       [id],
     );
@@ -94,7 +117,7 @@ describe('Comandos de pedido no outbox (integração)', () => {
     const order = await insertOrder(OrderStatus.RESERVED, pluginId);
     await orders.invoice(order.id);
 
-    const commands = await pool.query(
+    const commands = await pool.query<OrderCommandRow>(
       'SELECT * FROM order_command WHERE order_id = $1',
       [order.id],
     );
@@ -139,9 +162,7 @@ describe('Comandos de pedido no outbox (integração)', () => {
     });
   });
 
-  it('pedido com pluginId sem externalOrderId rejeita com 422', async () => {
-    // a constraint do banco exige os dois juntos; simula-se pelo plugin_id nulo
-    // não é possível, então o dispatcher é exercitado diretamente.
+  it('dispatcher rejeita com 422 comando sem externalOrderId, que a constraint do banco não deixa gravar', async () => {
     const dispatcher = moduleRef.get(OrderCommandDispatcher);
     const client = await pool.connect();
     try {
@@ -165,5 +186,32 @@ describe('Comandos de pedido no outbox (integração)', () => {
 
     expect(await statusOf(order.id)).toBe(OrderStatus.INVOICED);
     expect((await outboxFor(order.id)).rows).toHaveLength(0);
+  });
+
+  it('create com SKU sem estoque registrado cancela o pedido por OUT_OF_STOCK', async () => {
+    const unknownSku = `SKU-desconhecido-${randomUUID()}`;
+
+    const orderId = await orders.create({
+      items: [{ sku: unknownSku, quantity: 1, unitPriceCents: 100 }],
+    });
+
+    expect(orderId).not.toBeNull();
+    if (orderId === null) return;
+    orderIds.push(orderId);
+    expect(await orderOf(orderId)).toEqual({
+      status: OrderStatus.CANCELED,
+      cancel_reason: 'OUT_OF_STOCK',
+    });
+    const stockEvents = await pool.query(
+      'SELECT 1 FROM stock_event WHERE sku = $1 OR order_id = $2',
+      [unknownSku, orderId],
+    );
+    expect(stockEvents.rows).toHaveLength(0);
+    const outboxForSku = await pool.query(
+      'SELECT 1 FROM outbox_message WHERE correlation_id = $1',
+      [unknownSku],
+    );
+    expect(outboxForSku.rows).toHaveLength(0);
+    expect((await outboxFor(orderId)).rows).toHaveLength(0);
   });
 });

@@ -1,11 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 
-import {
-  OrderItem,
-  StockBalance,
-  StockEventType,
-} from '@oms/contracts';
+import { OrderItem, StockBalance, StockEventType } from '@oms/contracts';
 
 import { DatabaseService } from '../database/database.service';
 import { STOCK_AVAILABILITY_PORT } from './stock-availability.port';
@@ -95,9 +91,8 @@ export class StockService {
     const skus = [...quantitiesBySku.keys()].sort();
 
     for (const sku of skus) {
-      const response = await client.query<StockBalanceBySkuRow>(
+      const response = await client.query<StockBalanceRow>(
         `SELECT
-          sku,
           COALESCE(SUM(CASE
             WHEN type IN ('STOCK_RECEIVED', 'STOCK_RETURNED') THEN quantity
             WHEN type = 'STOCK_SHIPPED' THEN -quantity
@@ -109,8 +104,7 @@ export class StockService {
             ELSE 0
           END), 0)::TEXT AS reserved
          FROM stock_event
-         WHERE sku = $1
-         GROUP BY sku`,
+         WHERE sku = $1`,
         [sku],
       );
 
@@ -251,7 +245,12 @@ export class StockService {
     return response.rows.map((row) => {
       const physical = Number(row.physical);
       const reserved = Number(row.reserved);
-      return { sku: row.sku, physical, reserved, available: physical - reserved };
+      return {
+        sku: row.sku,
+        physical,
+        reserved,
+        available: physical - reserved,
+      };
     });
   }
 }
