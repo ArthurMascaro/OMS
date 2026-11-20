@@ -18,6 +18,6 @@ import { OutboxService } from './outbox.service';
       useExisting: OutboxStockAvailabilityAdapter,
     },
   ],
-  exports: [OutboxService, STOCK_AVAILABILITY_PORT],
+  exports: [OutboxService, OutboxRelayService, STOCK_AVAILABILITY_PORT],
 })
 export class OutboxModule {}
