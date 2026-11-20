@@ -3,7 +3,12 @@ import { Test } from '@nestjs/testing';
 import { randomUUID } from 'crypto';
 import { Pool } from 'pg';
 
-import { Capability, CommandType, HEARTBEAT_TIMEOUT_MS } from '@oms/contracts';
+import {
+  Capability,
+  CommandType,
+  HEARTBEAT_TIMEOUT_MS,
+  UpdateStockCommand,
+} from '@oms/contracts';
 
 import { DatabaseModule } from '../src/database/database.module';
 import { DatabaseService } from '../src/database/database.service';
@@ -11,6 +16,13 @@ import { OrdersModule } from '../src/orders/orders.module';
 import { OrdersService } from '../src/orders/orders.service';
 import { StockModule } from '../src/stock/stock.module';
 import { StockService } from '../src/stock/stock.service';
+
+interface UpdateStockOutboxRow {
+  id: string;
+  routing_key: string;
+  type: CommandType;
+  payload: UpdateStockCommand;
+}
 
 describe('UPDATE_STOCK no outbox (integração)', () => {
   let moduleRef: Awaited<ReturnType<typeof buildModule>>;
@@ -43,7 +55,7 @@ describe('UPDATE_STOCK no outbox (integração)', () => {
   };
 
   const outboxFor = (sku: string) =>
-    pool.query(
+    pool.query<UpdateStockOutboxRow>(
       `SELECT * FROM outbox_message WHERE correlation_id = $1 ORDER BY routing_key`,
       [sku],
     );
@@ -72,9 +84,10 @@ describe('UPDATE_STOCK no outbox (integração)', () => {
   });
 
   afterAll(async () => {
-    await pool.query(`DELETE FROM outbox_message WHERE correlation_id = ANY($1)`, [
-      skus,
-    ]);
+    await pool.query(
+      `DELETE FROM outbox_message WHERE correlation_id = ANY($1)`,
+      [skus],
+    );
     await pool.query('DELETE FROM plugin WHERE id = ANY($1)', [pluginIds]);
     await pool.end();
     await moduleRef.close();
@@ -94,7 +107,7 @@ describe('UPDATE_STOCK no outbox (integração)', () => {
         type: CommandType.UPDATE_STOCK,
         commandId: row.id,
         pluginId: row.routing_key,
-        issuedAt: expect.any(String),
+        issuedAt: expect.any(String) as string,
         data: { sku, available: 7 },
       });
       expect(new Date(row.payload.issuedAt).toISOString()).toBe(

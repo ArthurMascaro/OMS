@@ -10,6 +10,12 @@ import { DatabaseService } from '../src/database/database.service';
 import { OutboxModule } from '../src/outbox/outbox.module';
 import { OutboxService } from '../src/outbox/outbox.service';
 
+interface OutboxRow {
+  published_at: Date | null;
+  attempts: number;
+  payload: Command;
+}
+
 describe('OutboxService (integração)', () => {
   let moduleRef: Awaited<ReturnType<typeof buildModule>>;
   let database: DatabaseService;
@@ -59,7 +65,7 @@ describe('OutboxService (integração)', () => {
       }),
     );
 
-    const { rows } = await pool.query(
+    const { rows } = await pool.query<OutboxRow>(
       'SELECT * FROM outbox_message WHERE id = $1',
       [id],
     );
@@ -82,7 +88,7 @@ describe('OutboxService (integração)', () => {
       }),
     ).rejects.toThrow('falha após enqueue');
 
-    const count = await pool.query(
+    const count = await pool.query<{ total: number }>(
       'SELECT count(*)::int AS total FROM outbox_message WHERE id = $1',
       [rolledBackId],
     );
