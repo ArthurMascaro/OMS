@@ -16,12 +16,10 @@ import { OrdersInboundHandler } from '../orders/orders-inbound.handler';
 
 export const RETRY_COUNT_HEADER = 'x-retry-count';
 
-// Default exchange: a routing key é o nome da fila.
-const DEFAULT_EXCHANGE = '';
-const REPUBLISH_TIMEOUT_MS = 10000;
+const DEFAULT_EXCHANGE_ROUTING_BY_QUEUE_NAME = '';
+const BROKER_CONFIRM_TIMEOUT_MS = 10000;
 
-// Recorte do ConsumeMessage do amqplib (não há @types/amqplib no projeto).
-export interface ConsumeMessage {
+export interface AmqplibConsumeMessage {
   content: Buffer;
   properties: {
     contentType?: string;
@@ -35,20 +33,9 @@ export interface ConsumeMessage {
   };
 }
 
-/**
- * Consumer da fila core.inbound (mensagens dos plugins).
- *
- * O golevelup, por padrão, faz nack COM requeue quando o handler lança, o que
- * gera loop infinito. Por isso:
- * - erros do handler são tratados aqui: com tentativas restantes, a mensagem é
- *   republicada em core.inbound com x-retry-count + 1 e a original recebe ack;
- *   sem tentativas, retorna Nack(false) e o DLX da fila a leva à core.inbound.dlq.
- * - erros fora do handler (JSON inválido no deserializer, falha ao republicar)
- *   caem no errorHandler, que faz nack sem requeue: vão direto à DLQ.
- *
- * A fila é declarada pelo MessagingModule (com DLX); aqui só é verificada
- * (createQueueIfNotExists: false), para não redeclará-la com outros argumentos.
- */
+const QUEUE_DECLARED_BY_MESSAGING_MODULE = { createQueueIfNotExists: false };
+const NACK_WITHOUT_REQUEUE_TO_DEAD_LETTER = new Nack(false);
+
 @Injectable()
 export class InboundConsumer {
   private readonly logger = new Logger(InboundConsumer.name);
@@ -60,12 +47,12 @@ export class InboundConsumer {
 
   @RabbitSubscribe({
     queue: INBOUND_QUEUE,
-    createQueueIfNotExists: false,
+    ...QUEUE_DECLARED_BY_MESSAGING_MODULE,
     errorHandler: defaultNackErrorHandler,
   })
   async consume(
     message: InboundMessage,
-    raw: ConsumeMessage,
+    raw: AmqplibConsumeMessage,
   ): Promise<Nack | void> {
     try {
       await this.handler.handle(message);
@@ -77,36 +64,42 @@ export class InboundConsumer {
         this.logger.error(
           `Mensagem ${raw.properties.messageId} enviada à DLQ após ${retryCount} retentativas: ${reason}`,
         );
-        return new Nack(false);
+        return NACK_WITHOUT_REQUEUE_TO_DEAD_LETTER;
       }
 
       this.logger.warn(
         `Mensagem ${raw.properties.messageId} falhou (tentativa ${retryCount + 1}), republicando: ${reason}`,
       );
-      await this.republish(raw, retryCount + 1);
+      await this.republishAndAwaitBrokerConfirm(raw, retryCount + 1);
     }
   }
 
-  private retryCountOf(raw: ConsumeMessage): number {
+  private retryCountOf(raw: AmqplibConsumeMessage): number {
     const value = Number(raw.properties.headers?.[RETRY_COUNT_HEADER] ?? 0);
     return Number.isInteger(value) && value > 0 ? value : 0;
   }
 
-  // Resolve só após a confirmação do broker (canal padrão é ConfirmChannel);
-  // a original só recebe ack depois disso.
-  private async republish(raw: ConsumeMessage, retryCount: number) {
+  private async republishAndAwaitBrokerConfirm(
+    raw: AmqplibConsumeMessage,
+    retryCount: number,
+  ) {
     const { properties } = raw;
-    await this.amqp.publish(DEFAULT_EXCHANGE, INBOUND_QUEUE, raw.content, {
-      persistent: true,
-      contentType: properties.contentType,
-      contentEncoding: properties.contentEncoding,
-      correlationId: properties.correlationId,
-      messageId: properties.messageId,
-      timestamp: properties.timestamp,
-      type: properties.type,
-      appId: properties.appId,
-      headers: { ...properties.headers, [RETRY_COUNT_HEADER]: retryCount },
-      timeout: REPUBLISH_TIMEOUT_MS,
-    });
+    await this.amqp.publish(
+      DEFAULT_EXCHANGE_ROUTING_BY_QUEUE_NAME,
+      INBOUND_QUEUE,
+      raw.content,
+      {
+        persistent: true,
+        contentType: properties.contentType,
+        contentEncoding: properties.contentEncoding,
+        correlationId: properties.correlationId,
+        messageId: properties.messageId,
+        timestamp: properties.timestamp,
+        type: properties.type,
+        appId: properties.appId,
+        headers: { ...properties.headers, [RETRY_COUNT_HEADER]: retryCount },
+        timeout: BROKER_CONFIRM_TIMEOUT_MS,
+      },
+    );
   }
 }

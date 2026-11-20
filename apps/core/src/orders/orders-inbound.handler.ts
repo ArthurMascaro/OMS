@@ -8,9 +8,6 @@ import { OrdersService } from './orders.service';
 export class OrdersInboundHandler {
   constructor(private readonly ordersService: OrdersService) {}
 
-  // Chamado pelo InboundConsumer (messaging/inbound.consumer.ts) para cada
-  // mensagem da core.inbound. Lançar aqui faz a mensagem ser retentada e, ao
-  // esgotar MAX_INBOUND_RETRIES, ir para a core.inbound.dlq.
   async handle(message: InboundMessage): Promise<void> {
     switch (message.type) {
       case InboundMessageType.ORDER_RECEIVED:

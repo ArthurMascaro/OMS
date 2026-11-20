@@ -1,4 +1,5 @@
-/** @type {import('dependency-cruiser').IConfiguration} */
+const RESOLVED_OR_UNRESOLVED_PACKAGE_PREFIX = '(^|/node_modules/)';
+
 module.exports = {
   forbidden: [
     {
@@ -25,9 +26,7 @@ module.exports = {
         path: '^apps/core/src/',
       },
       to: {
-        // Casa o módulo resolvido em node_modules e também o não resolvido
-        // (pacote não instalado), que aparece só pelo nome.
-        path: '(^|/node_modules/)(axios|node-fetch|undici|@nestjs/axios)(/|$)',
+        path: `${RESOLVED_OR_UNRESOLVED_PACKAGE_PREFIX}(axios|node-fetch|undici|@nestjs/axios)(/|$)`,
       },
     },
   ],
