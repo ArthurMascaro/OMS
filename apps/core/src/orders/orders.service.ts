@@ -6,8 +6,10 @@ import {
 } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 
-import { CommandType, OrderItem, OrderStatus } from '@oms/contracts';
+import { CommandType, Order, OrderItem, OrderStatus } from '@oms/contracts';
 
+import { DatabaseService } from '../database/database.service';
+import { StockService } from '../stock/stock.service';
 import { DatabaseService } from '../database/database.service';
 import { StockService } from '../stock/stock.service';
 import { ORDER_TRANSITIONS, OrderCommandStatus } from './orders.constants';
@@ -23,6 +25,20 @@ interface LockedOrder {
   pluginId: string | null;
 }
 
+interface OrderRow {
+  id: string;
+  pluginId: string | null;
+  externalOrderId: string | null;
+  status: OrderStatus;
+  totalCents: number;
+  cancelReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  itemSku: string | null;
+  itemQuantity: number | null;
+  itemUnitPriceCents: number | null;
+}
+
 // Para o Sr Trizzoti e Raul Souza. Se acharem o método transaction interessante, dá pra criar algo na pasta /libs pra fazer esse compartilhado entre os services,
 //  e aí o service de orders e o service de plugin-registry podem usar. Mas não é obrigatório, só uma sugestão.
 // eu fiz ele aqui pra ele dar uma resolvida na minha vida por hora.
@@ -35,6 +51,54 @@ export class OrdersService {
     private readonly stockService: StockService,
     private readonly database: DatabaseService,
   ) {}
+
+  async findAll(): Promise<Order[]> {
+    const response = await this.pool.query<OrderRow>(`
+      SELECT
+        o.id,
+        o.plugin_id AS "pluginId",
+        o.external_order_id AS "externalOrderId",
+        o.status,
+        o.total_cents AS "totalCents",
+        o.cancel_reason AS "cancelReason",
+        o.created_at AS "createdAt",
+        o.updated_at AS "updatedAt",
+        oi.sku AS "itemSku",
+        oi.quantity AS "itemQuantity",
+        oi.unit_price_cents AS "itemUnitPriceCents"
+      FROM "order" o
+      LEFT JOIN order_item oi ON oi.order_id = o.id
+      ORDER BY o.created_at DESC, oi.id
+    `);
+
+    return this.mapOrderRows(response.rows);
+  }
+
+  async findById(id: string): Promise<Order | null> {
+    const response = await this.pool.query<OrderRow>(
+      `
+        SELECT
+          o.id,
+          o.plugin_id AS "pluginId",
+          o.external_order_id AS "externalOrderId",
+          o.status,
+          o.total_cents AS "totalCents",
+          o.cancel_reason AS "cancelReason",
+          o.created_at AS "createdAt",
+          o.updated_at AS "updatedAt",
+          oi.sku AS "itemSku",
+          oi.quantity AS "itemQuantity",
+          oi.unit_price_cents AS "itemUnitPriceCents"
+        FROM "order" o
+        LEFT JOIN order_item oi ON oi.order_id = o.id
+        WHERE o.id = $1
+        ORDER BY oi.id
+      `,
+      [id],
+    );
+
+    return this.mapOrderRows(response.rows)[0] ?? null;
+  }
 
   async create(order: NewOrder): Promise<string | null> {
     const totalCents = order.items.reduce(
@@ -303,6 +367,8 @@ export class OrdersService {
     // Pra pegar o commandId, coloca RETURNING command_id no INSERT acima e já vai estar pronto pra vc.
 
     return order.status;
+
+    return order.status;
   }
 
   private async loadOrderItems(
@@ -316,11 +382,47 @@ export class OrdersService {
         unit_price_cents AS "unitPriceCents"
        FROM order_item
        WHERE order_id = $1
-       ORDER BY sku`,
+       ORDER BY id`,
       [orderId],
     );
 
     return response.rows;
   }
 
+  private mapOrderRows(rows: OrderRow[]): Order[] {
+    const orders = new Map<string, Order>();
+
+    for (const row of rows) {
+      let order = orders.get(row.id);
+
+      if (!order) {
+        order = {
+          id: row.id,
+          pluginId: row.pluginId ?? undefined,
+          externalOrderId: row.externalOrderId ?? undefined,
+          status: row.status,
+          items: [],
+          totalCents: row.totalCents,
+          cancelReason: row.cancelReason ?? undefined,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        };
+        orders.set(row.id, order);
+      }
+
+      if (
+        row.itemSku !== null &&
+        row.itemQuantity !== null &&
+        row.itemUnitPriceCents !== null
+      ) {
+        order.items.push({
+          sku: row.itemSku,
+          quantity: row.itemQuantity,
+          unitPriceCents: row.itemUnitPriceCents,
+        });
+      }
+    }
+
+    return [...orders.values()];
+  }
 }
