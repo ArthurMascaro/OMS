@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 
 import { DatabaseModule } from './database/database.module';
+import { GraphqlModule } from './graphql/graphql.module';
 import { HealthController } from './health.controller';
 import { InboundModule } from './messaging/inbound.module';
 import { MessagingModule } from './messaging/messaging.module';
@@ -17,6 +18,7 @@ import { PluginRegistryModule } from './plugin-registry/plugin-registry.module';
     DatabaseModule,
     MessagingModule,
     OutboxModule,
+    GraphqlModule,
     PluginRegistryModule,
     OrdersModule,
     InboundModule,

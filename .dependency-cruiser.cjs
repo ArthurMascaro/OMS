@@ -29,6 +29,18 @@ module.exports = {
         path: `${RESOLVED_OR_UNRESOLVED_PACKAGE_PREFIX}(axios|node-fetch|undici|@nestjs/axios)(/|$)`,
       },
     },
+    {
+      name: 'graphql-must-not-access-database',
+      severity: 'error',
+      comment:
+        'GraphQL resolvers must use application services instead of database adapters.',
+      from: {
+        path: '^apps/core/src/graphql',
+      },
+      to: {
+        path: '^apps/core/src/database',
+      },
+    },
   ],
   options: {
     doNotFollow: {

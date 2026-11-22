@@ -12,6 +12,6 @@ import { OrdersService } from './orders.service';
   imports: [StockModule, OutboxModule, PluginRegistryModule],
   controllers: [OrdersController],
   providers: [OrdersService, OrdersInboundHandler, OrderCommandDispatcher],
-  exports: [OrdersInboundHandler],
+  exports: [OrdersInboundHandler, OrdersService],
 })
 export class OrdersModule {}
