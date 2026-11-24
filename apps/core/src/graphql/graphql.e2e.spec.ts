@@ -7,11 +7,11 @@ import { Order, OrderStatus } from '@oms/contracts';
 
 import { AppModule } from '../app.module';
 import { OrdersService } from '../orders/orders.service';
-import { StockService } from '../stock/stock.service';
+import { STOCK_PROJECTION_QUERY } from '../stock-projection/stock-projection.contract';
 
 describe('GraphQL API', () => {
   let app: INestApplication;
-  let stockService: { getBalances: jest.Mock };
+  let stockProjection: { getBalances: jest.Mock };
 
   const orders: Order[] = [
     {
@@ -55,7 +55,7 @@ describe('GraphQL API', () => {
         })),
       ),
     );
-    stockService = {
+    stockProjection = {
       getBalances,
     };
 
@@ -67,8 +67,8 @@ describe('GraphQL API', () => {
         findAll: jest.fn().mockResolvedValue(orders),
         findById: jest.fn().mockResolvedValue(orders[0]),
       })
-      .overrideProvider(StockService)
-      .useValue(stockService)
+      .overrideProvider(STOCK_PROJECTION_QUERY)
+      .useValue(stockProjection)
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -110,7 +110,7 @@ describe('GraphQL API', () => {
   });
 
   it('batches stock reads for nested orders', async () => {
-    stockService.getBalances.mockClear();
+    stockProjection.getBalances.mockClear();
 
     const response = await request(app.getHttpServer() as App)
       .post('/graphql')
@@ -134,7 +134,10 @@ describe('GraphQL API', () => {
     };
 
     expect(body.data.orders).toHaveLength(2);
-    expect(stockService.getBalances).toHaveBeenCalledTimes(1);
-    expect(stockService.getBalances).toHaveBeenCalledWith(['SKU-1', 'SKU-2']);
+    expect(stockProjection.getBalances).toHaveBeenCalledTimes(1);
+    expect(stockProjection.getBalances).toHaveBeenCalledWith([
+      'SKU-1',
+      'SKU-2',
+    ]);
   });
 });

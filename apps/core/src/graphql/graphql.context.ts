@@ -2,7 +2,7 @@ import DataLoader from 'dataloader';
 
 import { StockBalance } from '@oms/contracts';
 
-import type { StockService } from '../stock/stock.service';
+import type { StockProjectionQuery } from '../stock-projection/stock-projection.contract';
 
 export interface GraphqlContext {
   loaders: {
@@ -11,12 +11,12 @@ export interface GraphqlContext {
 }
 
 export function createGraphqlContext(
-  stockService: Pick<StockService, 'getBalances'>,
+  stockProjection: Pick<StockProjectionQuery, 'getBalances'>,
 ): GraphqlContext {
   return {
     loaders: {
       stockBySku: new DataLoader<string, StockBalance>(async (skus) => {
-        const balances = await stockService.getBalances(skus);
+        const balances = await stockProjection.getBalances(skus);
         const balancesBySku = new Map(
           balances.map((balance) => [balance.sku, balance]),
         );

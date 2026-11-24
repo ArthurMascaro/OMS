@@ -3,8 +3,11 @@ import { Module } from '@nestjs/common';
 import { GraphQLModule } from '@nestjs/graphql';
 
 import { OrdersModule } from '../orders/orders.module';
-import { StockModule } from '../stock/stock.module';
-import { StockService } from '../stock/stock.service';
+import {
+  STOCK_PROJECTION_QUERY,
+} from '../stock-projection/stock-projection.contract';
+import type { StockProjectionQuery } from '../stock-projection/stock-projection.contract';
+import { StockProjectionModule } from '../stock-projection/stock-projection.module';
 import { graphqlConfig } from './graphql.config';
 import { createGraphqlContext } from './graphql.context';
 import { OrdersResolver } from './resolvers/orders.resolver';
@@ -14,15 +17,15 @@ import { StockResolver } from './resolvers/stock.resolver';
   imports: [
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
-      imports: [StockModule],
-      inject: [StockService],
-      useFactory: (stockService: StockService) => ({
+      imports: [StockProjectionModule],
+      inject: [STOCK_PROJECTION_QUERY],
+      useFactory: (stockProjection: StockProjectionQuery) => ({
         ...graphqlConfig,
-        context: () => createGraphqlContext(stockService),
+        context: () => createGraphqlContext(stockProjection),
       }),
     }),
     OrdersModule,
-    StockModule,
+    StockProjectionModule,
   ],
   providers: [OrdersResolver, StockResolver],
 })
