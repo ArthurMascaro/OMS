@@ -4,48 +4,47 @@ Status: Aceita
 
 ## Contexto
 
-O ciclo de vida dos pedidos, advindos de diversos canais, influencia diretamente os estoques dos itens. O sistema precisa explicar como chegou a um saldo, desfazer movimentações (cancelamento e devolução) e impedir que a mesma unidade seja vendida duas vezes.
+O ciclo de vida dos pedidos, provenientes de diversos canais, influencia diretamente o estoque dos itens. O sistema precisa explicar como chegou a determinado saldo, desfazer movimentações em casos de cancelamento e devolução e impedir que uma mesma unidade seja vendida mais de uma vez.
 
-Como o OMS centraliza pedidos de múltiplos marketplaces, é necessário manter um histórico confiável das movimentações de estoque, garantindo rastreabilidade e consistência mesmo diante de operações simultâneas.
+Como o OMS centraliza pedidos de múltiplos marketplaces, é necessário manter um histórico confiável das movimentações de estoque, com rastreabilidade e consistência diante de operações simultâneas.
 
-Além disso, diferentes consumidores do sistema precisam consultar o saldo de estoque sem interferir nas operações de movimentação. O saldo deve ser obtido a partir dos eventos registrados.
+O sistema também precisa consultar saldo e histórico sem alterar os registros que representam as movimentações. O histórico deve permanecer como fonte da verdade, enquanto as consultas de saldo devem contar com uma estrutura adequada para leitura.
 
 Alternativas consideradas:
 
-- Saldo armazenado em uma coluna, alterado a cada operação.
-- Saldo armazenado em uma coluna e uma tabela de histórico.
-- Event Sourcing com o saldo derivado de eventos.
+- Armazenar o saldo em uma coluna e alterá-lo a cada operação.
+- Armazenar o saldo em uma coluna e manter uma tabela de histórico.
+- Usar Event Sourcing, registrando as movimentações como eventos e derivando o saldo desses eventos.
 
 ## Decisão
 
-Utilizaremos uma arquitetura de Event Sourcing para gerenciar as movimentações de estoque, registrando cada operação como um evento imutável em uma tabela do PostgreSQL. Com os eventos como fonte da verdade, saldo e histórico não divergem, como pode ocorrer quando os dois são gravados separadamente.
+Adotaremos Event Sourcing para gerenciar o estoque. Cada movimentação será registrada como um evento imutável em stock_event, que será a fonte da verdade. O saldo será derivado desses eventos, enquanto uma projeção oferecerá uma leitura eficiente dos saldos.
 
-O saldo físico, o reservado e o disponível serão calculados a partir dos eventos da referência. O saldo físico representa a quantidade de unidades existentes no estoque. O reservado representa a quantidade de unidades comprometidas com pedidos ainda não despachados. O disponível representa a quantidade que pode ser comercializada, calculada como físico menos reservado.
+Cada evento terá uma versão por referência. A restrição `UNIQUE (sku, version)` e a repetição da transação em caso de conflito protegerão gravações concorrentes. Quando houver um pedido relacionado, a mudança de estado do pedido e seus eventos de estoque serão gravados na mesma transação. Se o volume de eventos tornar a atualização custosa, snapshots poderão ser adicionados no futuro.
 
-Cada evento possuirá um identificador único. Uma coluna de versão, com a restrição `UNIQUE (sku, version)`, garantirá uma sequência independente de eventos para cada referência. A concorrência será controlada de forma otimista: se duas transações tentarem gravar a mesma versão, a restrição única rejeitará uma delas, e a aplicação reverterá e repetirá a transação, recalculando o saldo.
-
-O Event Store será gerenciado pelo módulo de estoque, responsável por registrar as movimentações como eventos imutáveis e garantir a integridade das operações. O módulo de estoque calculará o saldo diretamente a partir dos eventos. Se o volume de eventos tornar essas consultas custosas, snapshots poderão ser adicionados futuramente.
-
-Quando uma movimentação alterar o saldo disponível, o módulo de estoque solicitará ao módulo de despacho de comandos a atualização dos marketplaces por meio dos plugins compatíveis.
+A projeção manterá os saldos físico e reservado e a última versão aplicada por referência. O disponível será calculado como físico menos reservado. Quando consultada, ela aplicará os eventos ainda pendentes. Os consumidores acessarão a projeção pelo contrato do módulo, e movimentos serão consultados no histórico de eventos.
 
 ## Consequências
 
 Positivas:
 
-- Toda alteração de saldo tem origem rastreável até o pedido.
+- Toda movimentação é rastreável por um evento; quando vinculada a um pedido, o evento identifica esse pedido.
 - O saldo de qualquer data pode ser reconstruído.
 - Erros são corrigidos com um evento de compensação, sem editar o passado.
-- O saldo pode ser calculado sob demanda sem manter uma tabela de saldo separada.
-- A restrição de versão única por SKU e a repetição da transação protegem as reservas concorrentes.
+- A projeção pode ser reconstruída a partir dos eventos.
+- A restrição de versão única e a repetição da transação protegem gravações concorrentes.
+- As consultas de saldo não precisam recalcular todo o histórico a cada leitura.
 
 Negativas:
 
+- A projeção pode ficar temporariamente atrás dos eventos até uma consulta atualizá-la.
 - O cálculo do saldo pode ficar mais custoso à medida que o histórico de eventos cresce.
 - O formato de um evento vira contrato permanente. Mudanças exigem versionamento.
-- SKUs com muitos eventos poderão precisar de snapshots no futuro.
+- Referências com muitos eventos poderão precisar de snapshots no futuro.
 
 ## Conformidade
 
-- O usuário de banco da aplicação não tem permissão de `UPDATE` nem de `DELETE` na tabela de eventos, já que é uma tabela imutável.
-- Testes em Jest verificam o cálculo do saldo a partir dos eventos.
-- Testes verificam a concorrência de duas reservas simultâneas da última unidade, em que só uma é aceita.
+- Uma trigger no banco rejeita operações `UPDATE` e `DELETE` na tabela stock_event.
+- A gravação da tabela stock_balance_projection é responsabilidade do serviço do módulo de projeção; os consumidores recebem apenas seu contrato de consulta.
+- A projeção registra a última versão aplicada e atualiza o saldo somente com os eventos posteriores a essa versão.
+- A restrição única (sku, version) e a repetição de transações em conflito garantem a sequência de eventos por referência.
