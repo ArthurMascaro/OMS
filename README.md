@@ -110,14 +110,15 @@ A resposta é `201 Created` e contém o ID do pedido:
 { "id": "<order-uuid>" }
 ```
 
-O pedido reserva estoque disponível: começa como `RESERVED` quando há estoque suficiente e como `CANCELED` quando não há. Em uma base local vazia, não há estoque inicial. Para preparar o SKU do exemplo uma única vez, registre uma entrada de estoque no PostgreSQL:
+O pedido reserva estoque disponível: começa como `RESERVED` quando há estoque suficiente e como `CANCELED` quando não há. Em uma base local vazia, não há estoque inicial. Para preparar o SKU do exemplo uma única vez, registre uma entrada pela API do core:
 
 ```bash
-docker compose exec -T postgres psql -U oms -d oms \
-  -c "INSERT INTO stock_event (sku, version, type, quantity) VALUES ('SKU-001', 1, 'STOCK_RECEIVED', 10);"
+curl -i -X POST http://localhost:3000/stock/receipts \
+  -H 'Content-Type: application/json' \
+  -d '{"sku":"SKU-001","quantity":10}'
 ```
 
-Cada `sku` precisa ter versões sequenciais, então não repita o comando sem ajustar o `version` para o próximo número.
+A rota responde `204 No Content`. Não repita a chamada sem intenção de adicionar mais unidades ao estoque.
 
 Guarde o UUID retornado. Com estoque disponível, o pedido fica `RESERVED`; avance-o para `INVOICED` e depois `SHIPPED`:
 
