@@ -1,15 +1,9 @@
-import {
-  Body,
-  Controller,
-  HttpCode,
-  HttpStatus,
-  Param,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
 
 import { InboundPublisherService } from '../messaging/inbound-publisher.service';
 import { CancelOrderDto } from './cancel-order.dto';
 import { CreateOrderDto } from './create-order.dto';
+import { ExternalOrderIdParamDto } from './external-order-id-param.dto';
 
 interface AcceptedResponse {
   message: string;
@@ -37,16 +31,16 @@ export class OrdersController {
   @Post(':externalOrderId/cancel')
   @HttpCode(HttpStatus.ACCEPTED)
   async cancel(
-    @Param('externalOrderId') externalOrderId: string,
+    @Param() params: ExternalOrderIdParamDto,
     @Body() body: CancelOrderDto,
   ): Promise<AcceptedResponse> {
     const messageId = await this.publisher.publishOrderCanceledByChannel({
-      externalOrderId,
+      externalOrderId: params.externalOrderId,
       reason: body.reason,
     });
 
     return {
-      message: `Cancelamento do pedido ${externalOrderId} enviado para processamento`,
+      message: `Cancelamento do pedido ${params.externalOrderId} enviado para processamento`,
       messageId,
     };
   }
