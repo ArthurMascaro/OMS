@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 
 import { INBOUND_DLQ, INBOUND_QUEUE } from '@oms/contracts';
 
+import { InboundPublisherService } from './inbound-publisher.service';
+
 @Module({
   imports: [
     RabbitMQModule.forRootAsync({
@@ -29,6 +31,7 @@ import { INBOUND_DLQ, INBOUND_QUEUE } from '@oms/contracts';
       }),
     }),
   ],
-  exports: [RabbitMQModule],
+  providers: [InboundPublisherService],
+  exports: [RabbitMQModule, InboundPublisherService],
 })
 export class MessagingModule {}
