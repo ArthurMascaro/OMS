@@ -6,6 +6,7 @@ import { PluginSdkModule } from '@oms/plugin-sdk';
 
 import { HealthController } from './health.controller';
 import { MessagingModule } from './messaging/messaging.module';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { MessagingModule } from './messaging/messaging.module';
       ],
     }),
     MessagingModule,
+    OrdersModule,
   ],
   controllers: [HealthController],
 })
