@@ -3,6 +3,7 @@ import { ServiceUnavailableException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 
 import {
+  CommandProcessed,
   INBOUND_QUEUE,
   InboundMessageType,
   type OrderCanceledByChannel,
@@ -10,9 +11,15 @@ import {
   type OrderReceived,
 } from '@oms/contracts';
 
-const PLUGIN_ID = 'mercado-livre';
+import { PLUGIN_ID } from '../plugin.constants';
+
 const BROKER_CONFIRM_TIMEOUT_MS = 10000;
 const DEFAULT_EXCHANGE = '';
+
+export interface CommandResult {
+  success: boolean;
+  error?: string;
+}
 
 @Injectable()
 export class InboundPublisherService {
@@ -58,8 +65,29 @@ export class InboundPublisherService {
     return message.messageId;
   }
 
+  async publishCommandProcessed(
+    commandId: string,
+    result: CommandResult,
+  ): Promise<string> {
+    const message: CommandProcessed = {
+      messageId: randomUUID(),
+      type: InboundMessageType.COMMAND_PROCESSED,
+      pluginId: PLUGIN_ID,
+      issuedAt: new Date().toISOString(),
+      data: {
+        commandId,
+        success: result.success,
+        error: result.error,
+      },
+    };
+
+    await this.publish(message);
+
+    return message.messageId;
+  }
+
   private async publish(
-    message: OrderReceived | OrderCanceledByChannel,
+    message: OrderReceived | OrderCanceledByChannel | CommandProcessed,
   ): Promise<void> {
     try {
       await this.amqp.publish(DEFAULT_EXCHANGE, INBOUND_QUEUE, message, {
