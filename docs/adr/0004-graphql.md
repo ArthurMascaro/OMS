@@ -15,7 +15,7 @@ Alternativas consideradas:
 
 ## Decisão
 
-Adotaremos uma API GraphQL somente de leitura no core, expondo os tipos `Pedido`, `ItemPedido`, `Estoque` e `Movimentacao`, alimentada pelas bases/projeções de leitura.
+Adotaremos uma API GraphQL somente de leitura no core, expondo os tipos `Order`, `OrderItem`, `Stock` e `Movement` (pedido, item do pedido, estoque e movimentação), alimentados pelas bases/projeções de leitura.
 
 O GraphQL permite que cada cliente solicite exatamente os campos necessários e agregue pedido e estoque em uma única requisição, além de fornecer um schema fortemente tipado como contrato. Descartamos o REST por exigir manutenção constante de variações de payload, e o gRPC por não oferecer a mesma flexibilidade de consulta para clientes web. As operações de escrita permanecem fora do GraphQL.
 
@@ -33,6 +33,6 @@ Também abrimos mão da simplicidade do cache HTTP padrão, já que todas as req
 
 ## Conformidade
 
-O isolamento entre leitura e escrita será garantido por um teste em Jest que falha caso o schema montado exponha o tipo `Mutation`, somado a uma regra no dependency-cruiser que proíbe os resolvers de importarem o módulo do event store.
+O isolamento entre leitura e escrita será garantido por um teste em Jest que falha caso o schema montado exponha o tipo `Mutation`, somado a uma regra no dependency-cruiser que proíbe o código GraphQL de importar o `StockService`, responsável por gravar eventos na tabela `stock_event`.
 
-Já a proteção de performance será assegurada pela configuração do `graphql-depth-limit` para restringir a profundidade das consultas e por um teste em Jest que monitora a contagem de leituras no banco durante consultas aninhadas com o DataLoader ativo.
+Já a proteção de performance será assegurada pela configuração do `graphql-depth-limit` para restringir a profundidade das consultas e por um teste em Jest que verifica se consultas aninhadas com o DataLoader agrupam os SKUs em uma única chamada a `getBalances` na projeção de leitura.
