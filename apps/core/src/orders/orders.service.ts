@@ -111,6 +111,8 @@ export class OrdersService {
     const unitPrices = order.items.map((item) => item.unitPriceCents);
 
     return this.database.transaction(async (client) => {
+      await this.lockExternalOrder(client, order.pluginId, order.externalOrderId);
+
       const response = await client.query<{ id: string }>(
         `INSERT INTO "order" (
           plugin_id,
@@ -167,6 +169,15 @@ export class OrdersService {
           OrderStatus.CANCELED,
           undefined,
           'OUT_OF_STOCK',
+        );
+      }
+
+      if (order.pluginId && order.externalOrderId) {
+        await this.applyPendingChannelCancellation(
+          client,
+          orderId,
+          order.pluginId,
+          order.externalOrderId,
         );
       }
 
@@ -235,44 +246,118 @@ export class OrdersService {
     externalOrderId: string,
     reason: string,
   ) {
-    const response = await this.pool.query<{ id: string }>(
-      `SELECT
-        id
-       FROM "order"
-       WHERE
-        plugin_id = $1
-        AND external_order_id = $2`,
-      [pluginId, externalOrderId],
-    );
-
-    if (response.rowCount === 0) {
-      this.logger.warn(`Order ${externalOrderId} from ${pluginId} not found`);
-      return;
-    }
-
-    const orderId = response.rows[0].id;
-
     await this.database.transaction(async (client) => {
-      if (await this.isAlreadyCanceled(client, orderId)) {
-        this.logger.log(
-          `Order ${externalOrderId} from ${pluginId} already canceled`,
+      await this.lockExternalOrder(client, pluginId, externalOrderId);
+
+      const response = await client.query<{ id: string }>(
+        `SELECT
+          id
+         FROM "order"
+         WHERE
+          plugin_id = $1
+          AND external_order_id = $2`,
+        [pluginId, externalOrderId],
+      );
+
+      if (response.rowCount === 0) {
+        await this.keepPendingChannelCancellation(
+          client,
+          pluginId,
+          externalOrderId,
+          reason,
         );
         return;
       }
 
-      const previousStatus = await this.changeStatus(
-        client,
-        orderId,
-        OrderStatus.CANCELED,
-        undefined,
-        reason,
-      );
-
-      if (previousStatus === OrderStatus.RESERVED) {
-        const items = await this.loadOrderItems(client, orderId);
-        await this.stockService.releaseReservation(client, orderId, items);
-      }
+      await this.cancelFromChannel(client, response.rows[0].id, reason);
     });
+  }
+
+  private async keepPendingChannelCancellation(
+    client: PoolClient,
+    pluginId: string,
+    externalOrderId: string,
+    reason: string,
+  ) {
+    await client.query(
+      `INSERT INTO pending_channel_cancellation (
+        plugin_id,
+        external_order_id,
+        reason
+       ) VALUES (
+        $1,
+        $2,
+        $3
+       )
+       ON CONFLICT (plugin_id, external_order_id) DO UPDATE SET
+        reason = EXCLUDED.reason,
+        received_at = NOW()`,
+      [pluginId, externalOrderId, reason],
+    );
+
+    this.logger.log(
+      `Order ${externalOrderId} from ${pluginId} not found; cancellation kept pending`,
+    );
+  }
+
+  private async applyPendingChannelCancellation(
+    client: PoolClient,
+    orderId: string,
+    pluginId: string,
+    externalOrderId: string,
+  ) {
+    const response = await client.query<{ reason: string }>(
+      `DELETE FROM pending_channel_cancellation
+       WHERE
+        plugin_id = $1
+        AND external_order_id = $2
+       RETURNING reason`,
+      [pluginId, externalOrderId],
+    );
+
+    if (response.rowCount === 0) {
+      return;
+    }
+
+    await this.cancelFromChannel(client, orderId, response.rows[0].reason);
+  }
+
+  private async cancelFromChannel(
+    client: PoolClient,
+    orderId: string,
+    reason: string,
+  ) {
+    if (await this.isAlreadyCanceled(client, orderId)) {
+      this.logger.log(`Order ${orderId} already canceled`);
+      return;
+    }
+
+    const previousStatus = await this.changeStatus(
+      client,
+      orderId,
+      OrderStatus.CANCELED,
+      undefined,
+      reason,
+    );
+
+    if (previousStatus === OrderStatus.RESERVED) {
+      const items = await this.loadOrderItems(client, orderId);
+      await this.stockService.releaseReservation(client, orderId, items);
+    }
+  }
+
+  private async lockExternalOrder(
+    client: PoolClient,
+    pluginId: string | undefined,
+    externalOrderId: string | undefined,
+  ) {
+    if (!pluginId || !externalOrderId) {
+      return;
+    }
+
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      `${pluginId}:${externalOrderId}`,
+    ]);
   }
 
   async completeCommand(commandId: string, success: boolean, error?: string) {
