@@ -148,6 +148,41 @@ curl -i -X POST "http://localhost:3000/orders/$ORDER_ID/return"
 
 Essa rota requer que o plugin declare a capability `RETURN_ORDER`; os plugins de exemplo não a declaram. Tentativas de transições inválidas ou sem capability são rejeitadas pelo core. Com `pluginId`, os comandos também são publicados assincronamente pelo RabbitMQ conforme a configuração de outbox. Não há endpoint REST `GET` para consultar pedidos; use as queries GraphQL abaixo.
 
+### Pedidos pelo plugin Mercado Livre
+
+O plugin Mercado Livre expõe duas rotas que publicam mensagens na fila `core.inbound`, sem precisar publicar pelo painel do RabbitMQ. A resposta `202 Accepted` significa que a mensagem foi enfileirada; o processamento é assíncrono, e o resultado pode ser consultado pelas queries GraphQL. O cancelamento usa o `externalOrderId` do pedido no canal, não o UUID do core.
+
+Criar pedido:
+
+```bash
+curl -i -X POST http://localhost:3001/orders \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "externalOrderId": "ML-123",
+    "items": [
+      { "sku": "SKU-001", "quantity": 2, "unitPriceCents": 4990 }
+    ]
+  }'
+```
+
+```json
+{ "message": "Pedido ML-123 enviado para processamento", "messageId": "<uuid>" }
+```
+
+Cancelar pedido:
+
+```bash
+curl -i -X POST http://localhost:3001/orders/ML-123/cancel \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"Cliente desistiu"}'
+```
+
+```json
+{ "message": "Cancelamento do pedido ML-123 enviado para processamento", "messageId": "<uuid>" }
+```
+
+Se o broker não confirmar a publicação, a rota responde `503`. Body inválido responde `400`.
+
 ## Consultas GraphQL
 
 As operações GraphQL implementadas são queries de pedidos, estoque e movimentações. Os exemplos podem ser executados no Playground em `/graphql`.
