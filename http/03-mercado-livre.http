@@ -1,0 +1,38 @@
+# API simplificada do plugin Mercado Livre (porta 3001).
+# As rotas não chamam o core diretamente: publicam mensagens na fila core.inbound.
+# A resposta 202 significa "enfileirado"; o processamento é assíncrono.
+
+### 1. Criar pedido
+# Resposta esperada: 202 Accepted
+# { "message": "Pedido ML-123 enviado para processamento", "messageId": "<uuid>" }
+POST http://localhost:3001/orders
+Content-Type: application/json
+
+{
+  "externalOrderId": "ML-123",
+  "items": [
+    { "sku": "SKU-001", "quantity": 2, "unitPriceCents": 4990 }
+  ]
+}
+
+### 2. Cancelar pedido
+# Resposta esperada: 202 Accepted
+# { "message": "Cancelamento do pedido ML-123 enviado para processamento", "messageId": "<uuid>" }
+# Pode ser enviado antes da criação do pedido: o core guarda e aplica quando o pedido chegar.
+POST http://localhost:3001/orders/ML-123/cancel
+Content-Type: application/json
+
+{
+  "reason": "Cliente desistiu"
+}
+
+### 3. Criar pedido sem itens
+# Resposta esperada: 400 Bad Request
+# { "message": ["items should not be empty"], "error": "Bad Request", "statusCode": 400 }
+POST http://localhost:3001/orders
+Content-Type: application/json
+
+{
+  "externalOrderId": "ML-456",
+  "items": []
+}

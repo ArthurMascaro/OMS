@@ -1,0 +1,40 @@
+# Pedidos pela API REST do core (sem plugin).
+# Ordem do fluxo: criar -> faturar -> enviar. Cancelar é possível enquanto estiver RESERVED.
+
+# Troque pelo UUID retornado na criação do pedido.
+@orderId = COLE-O-UUID-AQUI
+
+### 1. Criar pedido
+# Resposta esperada: 201 Created
+# { "id": "<uuid>" }
+# Status do pedido: RESERVED se houver estoque; CANCELED (OUT_OF_STOCK) se não houver.
+POST http://localhost:3000/orders
+Content-Type: application/json
+
+{
+  "items": [
+    { "sku": "SKU-001", "quantity": 2, "unitPriceCents": 4990 }
+  ]
+}
+
+### 2. Faturar (RESERVED -> INVOICED)
+# Resposta esperada: 204 No Content
+POST http://localhost:3000/orders/{{orderId}}/invoice
+
+### 3. Enviar (INVOICED -> SHIPPED)
+# Resposta esperada: 204 No Content
+POST http://localhost:3000/orders/{{orderId}}/ship
+
+### 4. Devolver (SHIPPED -> RETURNED)
+# Resposta esperada: 204 No Content
+POST http://localhost:3000/orders/{{orderId}}/return
+
+### 5. Cancelar (RESERVED -> CANCELED)
+# Resposta esperada: 204 No Content
+# Se o pedido já estiver INVOICED, SHIPPED ou CANCELED, a resposta é 409 Conflict.
+POST http://localhost:3000/orders/{{orderId}}/cancel
+Content-Type: application/json
+
+{
+  "reason": "Solicitação do cliente"
+}

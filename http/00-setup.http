@@ -1,0 +1,49 @@
+# Setup do ambiente, do zero.
+# Antes de começar: docker compose up -d, migrations aplicadas e os serviços iniciados
+# (npm run start:core, npm run start:plugin-mercado-livre, npm run start:plugin-marketplace-b).
+
+### 1. Health do core
+# Resposta esperada: 200 OK
+# { "status": "ok", "outbox": { "pending": 0, "oldestPendingAgeSeconds": null } }
+GET http://localhost:3000/health
+
+### 2. Health do plugin Mercado Livre
+# Resposta esperada: 200 OK
+# { "status": "ok" }
+GET http://localhost:3001/health
+
+### 3. Health do plugin Marketplace B
+# Resposta esperada: 200 OK
+# { "status": "ok" }
+GET http://localhost:3002/health
+
+### 4. Estoque inicial do SKU-001 (rodar uma única vez; repetir soma mais unidades)
+# Resposta esperada: 204 No Content (sem corpo)
+POST http://localhost:3000/stock/receipts
+Content-Type: application/json
+
+{
+  "sku": "SKU-001",
+  "quantity": 10
+}
+
+### 5. (Opcional) Fila de comandos do Mercado Livre no RabbitMQ
+# Resposta esperada: 201 Created (ou 204 se a fila já existir)
+# Só evita que comandos fiquem pendentes no outbox; o plugin ainda não consome esses comandos.
+PUT http://localhost:15672/api/queues/%2F/plugin.mercado-livre
+Authorization: Basic b21zOm9tcw==
+Content-Type: application/json
+
+{
+  "durable": true
+}
+
+### 6. (Opcional) Vincular a fila à exchange oms.commands
+# Resposta esperada: 201 Created
+POST http://localhost:15672/api/bindings/%2F/e/oms.commands/q/plugin.mercado-livre
+Authorization: Basic b21zOm9tcw==
+Content-Type: application/json
+
+{
+  "routing_key": "mercado-livre"
+}

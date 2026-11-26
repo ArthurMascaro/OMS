@@ -1,0 +1,47 @@
+# Consultas GraphQL do core (Playground em http://localhost:3000/graphql).
+# O corpo é sempre { "query": "...", "variables": { ... } }.
+
+### 1. Listar pedidos com itens e saldo de estoque
+# Resposta esperada: 200 OK
+# { "data": { "orders": [ { "id": "...", "status": "RESERVED", "items": [...], "stock": [...] } ] } }
+POST http://localhost:3000/graphql
+Content-Type: application/json
+
+{
+  "query": "query { orders { id pluginId externalOrderId status totalCents items { sku quantity unitPriceCents } stock { sku physical reserved available } } }"
+}
+
+### 2. Consultar um pedido pelo id
+# Resposta esperada: 200 OK
+# { "data": { "order": { "id": "...", "status": "CANCELED", "cancelReason": "Solicitação do cliente", ... } } }
+# Troque o id pelo UUID de um pedido existente.
+POST http://localhost:3000/graphql
+Content-Type: application/json
+
+{
+  "query": "query GetOrder($id: ID!) { order(id: $id) { id status cancelReason totalCents items { sku quantity unitPriceCents } } }",
+  "variables": { "id": "COLE-O-UUID-AQUI" }
+}
+
+### 3. Saldo e movimentações de um SKU
+# Resposta esperada: 200 OK (valores de exemplo; mudam conforme o estado do estoque)
+# { "data": { "stock": { "sku": "SKU-001", "physical": 10, "reserved": 0, "available": 10 }, "movements": [ ... ] } }
+POST http://localhost:3000/graphql
+Content-Type: application/json
+
+{
+  "query": "query GetStock($sku: String!) { stock(sku: $sku) { sku physical reserved available } movements(sku: $sku) { eventId type sku version quantity orderId occurredAt } }",
+  "variables": { "sku": "SKU-001" }
+}
+
+### 4. Movimentações de um pedido
+# Resposta esperada: 200 OK
+# { "data": { "movements": [ { "type": "RESERVATION_CREATED", ... } ] } }
+# Pedidos criados sem estoque não têm movimentações, e a lista volta vazia: { "data": { "movements": [] } }
+POST http://localhost:3000/graphql
+Content-Type: application/json
+
+{
+  "query": "query OrderMovements($orderId: ID!) { movements(orderId: $orderId) { eventId type sku quantity orderId occurredAt } }",
+  "variables": { "orderId": "COLE-O-UUID-AQUI" }
+}

@@ -1,0 +1,28 @@
+# Estoque: consultar saldo e registrar entrada.
+
+### Consultar saldo do SKU-001
+# Resposta esperada: 200 OK (valores de exemplo; mudam conforme o estado do estoque)
+# { "sku": "SKU-001", "physical": 10, "reserved": 0, "available": 10 }
+GET http://localhost:3000/stock/SKU-001
+
+### Registrar entrada de 5 unidades do SKU-001
+# Resposta esperada: 204 No Content (sem corpo)
+# Cada chamada soma unidades ao estoque físico.
+POST http://localhost:3000/stock/receipts
+Content-Type: application/json
+
+{
+  "sku": "SKU-001",
+  "quantity": 5
+}
+
+### Entrada com quantidade inválida
+# Resposta esperada: 400 Bad Request
+# { "message": ["quantity must not be less than 1"], "error": "Bad Request", "statusCode": 400 }
+POST http://localhost:3000/stock/receipts
+Content-Type: application/json
+
+{
+  "sku": "SKU-001",
+  "quantity": 0
+}

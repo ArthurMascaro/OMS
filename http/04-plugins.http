@@ -1,0 +1,24 @@
+# Registro e heartbeat de plugins no core.
+# Os plugins incluídos já se registram sozinhos ao iniciar; estas chamadas servem para testar manualmente.
+
+### 1. Registrar um plugin
+# Resposta esperada: 204 No Content (sem corpo)
+# Registrar de novo o mesmo id atualiza o manifesto.
+POST http://localhost:3000/plugins/register
+Content-Type: application/json
+
+{
+  "id": "mercado-livre",
+  "marketplace": "Mercado Livre",
+  "capabilities": ["INVOICE_ORDER", "CANCEL_ORDER", "SHIP_ORDER", "UPDATE_STOCK"]
+}
+
+### 2. Enviar heartbeat
+# Resposta esperada: 204 No Content (sem corpo)
+# Envie a cada 10 segundos; sem heartbeat por 30 segundos o plugin deixa de ser ativo.
+POST http://localhost:3000/plugins/mercado-livre/heartbeat
+
+### 3. Heartbeat de plugin não registrado
+# Resposta esperada: 404 Not Found
+# { "message": "Plugin not registered", "error": "Not Found", "statusCode": 404 }
+POST http://localhost:3000/plugins/nao-existe/heartbeat
