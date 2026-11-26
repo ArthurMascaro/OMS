@@ -84,9 +84,9 @@ O heartbeat também responde `204 No Content`; se o plugin não estiver registra
 
 Capabilities aceitas: `INVOICE_ORDER`, `CANCEL_ORDER`, `SHIP_ORDER`, `RETURN_ORDER` e `UPDATE_STOCK`. O core envia comandos para plugins ativos que declaram a capability correspondente. Os plugins de exemplo já declaram capabilities no código; neste estágio, eles demonstram registro e heartbeat.
 
-## Criar pedidos
+## Criar e avançar pedidos pela API REST
 
-Pedidos são criados pela API REST `POST /orders` (não há mutation GraphQL). Os valores monetários são centavos. Para associar o pedido a um canal, envie `pluginId` e `externalOrderId` juntos; ambos podem ser omitidos para um pedido sem plugin.
+Pedidos são criados pela API REST `POST /orders` (não há mutation GraphQL). Os valores monetários são centavos. Para associar o pedido a um canal, envie `pluginId` e `externalOrderId` juntos; ambos podem ser omitidos para um pedido sem plugin. Use um `externalOrderId` diferente para cada pedido do mesmo plugin.
 
 ```bash
 curl -i -X POST http://localhost:3000/orders \
@@ -104,7 +104,7 @@ curl -i -X POST http://localhost:3000/orders \
   }'
 ```
 
-A resposta contém o ID do pedido:
+A resposta é `201 Created` e contém o ID do pedido:
 
 ```json
 { "id": "<order-uuid>" }
@@ -117,28 +117,35 @@ docker compose exec -T postgres psql -U oms -d oms \
   -c "INSERT INTO stock_event (sku, version, type, quantity) VALUES ('SKU-001', 1, 'STOCK_RECEIVED', 10);"
 ```
 
-Cada `sku` precisa ter versões sequenciais, então não repita o comando sem ajustar o `version` para o próximo número. Para criar outro pedido com o mesmo plugin, use um `externalOrderId` diferente.
+Cada `sku` precisa ter versões sequenciais, então não repita o comando sem ajustar o `version` para o próximo número.
 
-Rotas adicionais de mudança de estado aceitam o UUID retornado:
+Guarde o UUID retornado. Com estoque disponível, o pedido fica `RESERVED`; avance-o para `INVOICED` e depois `SHIPPED`:
 
 ```bash
 ORDER_ID='<order-uuid>'
 
+# RESERVED -> INVOICED
 curl -i -X POST "http://localhost:3000/orders/$ORDER_ID/invoice"
+
+# INVOICED -> SHIPPED
 curl -i -X POST "http://localhost:3000/orders/$ORDER_ID/ship"
 ```
 
-Para cancelar, use um pedido ainda `RESERVED` (em vez de faturá-lo ou enviá-lo):
+Cada chamada bem-sucedida de transição responde `204 No Content`. Para cancelar, use a rota abaixo enquanto o pedido ainda está `RESERVED` (em vez de faturá-lo ou enviá-lo):
 
 ```bash
-CANCEL_ORDER_ID='<outro-order-uuid>'
-
-curl -i -X POST "http://localhost:3000/orders/$CANCEL_ORDER_ID/cancel" \
+curl -i -X POST "http://localhost:3000/orders/$ORDER_ID/cancel" \
   -H 'Content-Type: application/json' \
   -d '{"reason":"Solicitação do cliente"}'
 ```
 
-Use somente a transição permitida para o status atual: `RESERVED -> INVOICED` ou `CANCELED`, `INVOICED -> SHIPPED` e `SHIPPED -> RETURNED`. A rota de retorno é `POST /orders/:id/return` e requer um plugin com a capability `RETURN_ORDER`; os plugins de exemplo não a declaram. As rotas respondem `204 No Content` quando concluem; erros de transição ou capabilities ausentes são retornados pelo core. Com `pluginId`, comandos são publicados assincronamente pelo RabbitMQ conforme a configuração de outbox.
+O fluxo permitido é `RESERVED -> INVOICED` ou `CANCELED`, `INVOICED -> SHIPPED` e `SHIPPED -> RETURNED`. Para retornar um pedido enviado:
+
+```bash
+curl -i -X POST "http://localhost:3000/orders/$ORDER_ID/return"
+```
+
+Essa rota requer que o plugin declare a capability `RETURN_ORDER`; os plugins de exemplo não a declaram. Tentativas de transições inválidas ou sem capability são rejeitadas pelo core. Com `pluginId`, os comandos também são publicados assincronamente pelo RabbitMQ conforme a configuração de outbox. Não há endpoint REST `GET` para consultar pedidos; use as queries GraphQL abaixo.
 
 ## Consultas GraphQL
 
