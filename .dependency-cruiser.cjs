@@ -60,12 +60,25 @@ module.exports = {
       name: 'graphql-must-not-access-database',
       severity: 'error',
       comment:
-        'GraphQL resolvers must use application services instead of database adapters.',
+        'GraphQL resolvers must use application services instead of database adapters' +
+        '(ADR 0004).',
       from: {
         path: '^apps/core/src/graphql',
       },
       to: {
         path: '^apps/core/src/database',
+      },
+    },
+    {
+      name: 'graphql-must-not-access-event-store',
+      severity: 'error',
+      comment:
+        'GraphQL resolvers must use read projections, not the service that writes stock events (ADR 0004).',
+      from: {
+        path: '^apps/core/src/graphql/',
+      },
+      to: {
+        path: '^apps/core/src/stock/stock\\.service\\.ts$',
       },
     },
   ],
