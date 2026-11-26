@@ -3,6 +3,33 @@ const RESOLVED_OR_UNRESOLVED_PACKAGE_PREFIX = '(^|/node_modules/)';
 module.exports = {
   forbidden: [
     {
+      name: 'core-nao-importa-plugins',
+      comment:
+        'O core só conhece plugins pelo registro. Código compartilhado vai ' +
+        'para libs/ (ADR 0001).',
+      severity: 'error',
+      from: {
+        path: '^apps/core/',
+      },
+      to: {
+        path: '^apps/plugin-',
+      },
+    },
+    {
+      name: 'plugin-nao-importa-outro-plugin',
+      comment:
+        'Plugins não se comunicam entre si. Código compartilhado vai para ' +
+        'libs/ (ADR 0001).',
+      severity: 'error',
+      from: {
+        path: '^apps/(plugin-[^/]+)/',
+      },
+      to: {
+        path: '^apps/plugin-',
+        pathNot: '^apps/$1/',
+      },
+    },
+    {
       name: 'rabbitmq-so-em-messaging-e-outbox',
       comment:
         'Só messaging/ e outbox/ falam com o RabbitMQ. O resto do core grava no ' +

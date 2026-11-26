@@ -17,7 +17,7 @@ Alternativas consideradas:
 
 Adotaremos o estilo microkernel, com um core e plugin por marketplace.
 
-O core mantém o pedido universal, o estoque, o registro de plugins e suas devidas regras. Cada plugin é uma aplicação NestJS em processo próprio. Ao subir, o plugin se registra no core por HTTP com um manifesto base (id, marketplace e capacidades) e passa a enviar heartbeat. O core removerá do registro o plugin que parar de responder.
+O core mantém o pedido universal, o estoque, o registro de plugins e suas devidas regras. Cada plugin é uma aplicação NestJS em processo próprio. Ao subir, o plugin se registra no core por HTTP com um manifesto base (id, marketplace e capacidades) e passa a enviar heartbeat. O core considera inativo, e deixa de enviar comandos, o plugin que ficar sem heartbeat além do prazo. O registro continua guardado e volta a valer quando o heartbeat retorna.
 
 O core só invoca plugins pelo registro e consulta as capacidades antes de enviar um comando (Ex: um marketplace pode não aceitar criação de etiqueta, enquanto outro sim, isso é uma capacidade da integração). Plugins não realizam comunicação entre si.
 
@@ -42,9 +42,10 @@ Aceitamos as consequências pois o volume esperado cabe em um core único e o cu
 
 ## Conformidade
 
-- Validação no CI que falha se algo do core importar de plugins, ou se um plugin importar de outro. Core e plugins podem compartilhar uma pasta de libs externa.
-- Teste e2e que sobe um plugin com o core em execução e verifica o registro.
-- Teste e2e que executa o core sem plugins, cria pedido, movimenta o estoque e percorre o fluxo.
+- Regras do dependency-cruiser (`npm run lint:arch`) que falham se algo do core importar de plugins, ou se um plugin importar de outro (`core-nao-importa-plugins` e `plugin-nao-importa-outro-plugin`). Core e plugins podem compartilhar a pasta `libs/`.
+- Teste e2e que sobe um plugin com o core em execução e verifica o registro e o novo registro pelo heartbeat (`apps/core/test/plugin-registration.e2e-spec.ts`).
+- Teste e2e que executa o core sem plugins, cria pedido, movimenta o estoque e percorre o fluxo (`apps/core/test/order-flow.e2e-spec.ts`).
+- Os testes e2e rodam com `npm run test:e2e`, com Postgres e RabbitMQ do `docker-compose.yml` no ar.
 
 ## Notas
 
